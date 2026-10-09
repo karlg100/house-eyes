@@ -8,6 +8,7 @@ import argparse
 import math
 import pi3d
 import random
+import socket
 import threading
 import time
 import RPi.GPIO as GPIO
@@ -55,6 +56,59 @@ if JOYSTICK_X_IN >= 0 or JOYSTICK_Y_IN >= 0 or PUPIL_IN >= 0:
 	bonnet.setup_channel(JOYSTICK_Y_IN, reverse=JOYSTICK_Y_FLIP)
 	bonnet.setup_channel(PUPIL_IN, reverse=PUPIL_IN_FLIP)
 	bonnet.start()
+
+
+# GAZE INPUT (house-eyes) --------------------------------------------------
+# A tracker (tracker/house_eyes_tracker.py) sends UDP datagrams "x y" with
+# x, y in -1..1, in the projector's own screen coordinates (x: -1 = screen
+# left, +1 = screen right; y: -1 = down, +1 = up). If the image on the sheet
+# is mirrored (rear projection), flip x in the tracker config, not here. While messages keep arriving the eyes
+# ease toward that point; after GAZE_TIMEOUT seconds of silence they go
+# back to wandering on their own. Test by hand:
+#   echo "0.8 0" | nc -u -w0 eyes.local 5005
+
+GAZE_PORT    = 5005   # UDP port; 0 disables gaze input
+GAZE_BIND    = "0.0.0.0"
+GAZE_TIMEOUT = 2.0    # seconds without a message before eyes wander again
+GAZE_EASE    = 0.12   # seconds; time constant for easing toward the target
+
+class GazeInput(threading.Thread):
+	def __init__(self, port, bind=GAZE_BIND):
+		threading.Thread.__init__(self, daemon=True)
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.sock.bind((bind, port))
+		self.lock = threading.Lock()
+		self.target = None
+		self.stamp = 0.0
+	def run(self):
+		while True:
+			try:
+				data = self.sock.recv(256).decode("ascii", "ignore").split()
+				x = max(-1.0, min(1.0, float(data[0])))
+				y = max(-1.0, min(1.0, float(data[1]))) if len(data) > 1 else 0.0
+			except Exception:
+				continue
+			with self.lock:
+				self.target = (x, y)
+				self.stamp = time.time()
+	def get(self, now):
+		with self.lock:
+			if self.target is None or now - self.stamp > GAZE_TIMEOUT:
+				return None
+			return self.target
+
+gazeInput = None
+_gaze_parser = argparse.ArgumentParser(add_help=False)
+_gaze_parser.add_argument("--gaze-port", type=int, default=GAZE_PORT)
+_gaze_args, _ = _gaze_parser.parse_known_args()
+if _gaze_args.gaze_port > 0:
+	try:
+		gazeInput = GazeInput(_gaze_args.gaze_port)
+		gazeInput.start()
+	except OSError as e:
+		print("Gaze input disabled:", e)
+lastFrameTime = time.time()
 
 
 # Load SVG file, extract paths & convert to point lists --------------------
@@ -405,6 +459,7 @@ def frame(p):
 	global trackingPos
 	global trackingPosC
 	global trackingPosR
+	global lastFrameTime
 
 	DISPLAY.loop_running()
 
@@ -417,7 +472,27 @@ def frame(p):
 #	if(now > beginningTime):
 #		print(frames/(now-beginningTime))
 
-	if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
+	gaze = gazeInput.get(now) if gazeInput else None
+	frameDt = now - lastFrameTime
+	lastFrameTime = now
+	if gaze is not None:
+		# Eye position from the people tracker: ease toward the target
+		tx = -gaze[0] * 30.0   # curX > 0 turns the pupils toward screen-left
+		ty = gaze[1] * 30.0
+		r = math.sqrt(tx * tx + ty * ty)
+		if r > 30.0:
+			tx *= 30.0 / r
+			ty *= 30.0 / r
+		k = 1.0 - math.exp(-max(frameDt, 0.0) / GAZE_EASE)
+		curX += (tx - curX) * k
+		curY += (ty - curY) * k
+		# Park the autonomous motion here so it resumes smoothly later
+		startX = destX = curX
+		startY = destY = curY
+		isMoving = False
+		startTime = now
+		holdDuration = random.uniform(0.5, 1.5)
+	elif JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
 		# Eye position from analog inputs
 		curX = bonnet.channel[JOYSTICK_X_IN].value
 		curY = bonnet.channel[JOYSTICK_Y_IN].value

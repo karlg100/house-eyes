@@ -1,0 +1,18 @@
+[Unit]
+Description=house-eyes people tracker (camera -> NCS2 -> eye gaze)
+After=network.target
+
+[Service]
+User=house-eyes
+Group=house-eyes
+SupplementaryGroups=video users
+ExecStart=/bin/bash -c 'source /opt/intel/openvino_2022/setupvars.sh >/dev/null && exec /usr/bin/python3 /opt/house-eyes/tracker/house_eyes_tracker.py --config /etc/house-eyes/tracker.ini'
+# The stick's driver keeps a lock file in /tmp (mvnc.mutex); a private /tmp
+# stops it clashing with one left by a manual run as another user.
+PrivateTmp=yes
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

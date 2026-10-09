@@ -14,10 +14,11 @@ not from the real projector.*
 | Piece | What it is |
 |---|---|
 | Computer | Raspberry Pi 4 Model B, hostname `eyes` (`eyes.local`), user `karlg` |
-| OS | Raspberry Pi OS 11 "bullseye", 32-bit, Desktop image (2023-05-03) |
+| OS | Raspberry Pi OS 11 "bullseye", 32-bit, Desktop image (2023-05-03), booted on the 32-bit kernel (`arm_64bit=0`) for the NCS2 |
 | Output | HDMI0 to the projector. Boots at 640x480 @ 60 Hz; X then switches to the projector's preferred mode (1920x1080 on the current Hichip projector) |
 | Eye software | [Adafruit Pi_Eyes](https://github.com/adafruit/Pi_Eyes) (MIT), rendered with [pi3d](https://pi3d.github.io/) |
-| Our change | `eyes/tri-eyes.py`: Adafruit's two-eye `eyes.py` with a third, centre eye added |
+| Our change | `eyes/tri-eyes.py`: Adafruit's two-eye `eyes.py` with a third, centre eye added, plus a UDP gaze input |
+| People tracking | `tracker/`: a camera and an Intel Neural Compute Stick 2 find people on the sidewalk and steer the eyes to watch them. See [docs/TRACKING.md](docs/TRACKING.md) |
 | Autostart | One line in `/etc/rc.local` |
 
 Boot sequence:
@@ -48,9 +49,11 @@ eyes/                   The code that runs. Copied to /boot/Pi_Eyes by install.s
   graphics/             Eye shape SVGs and iris/sclera/lid textures
   variants/             Earlier experiments, kept for reference
   LICENSE               Adafruit's MIT licence for this code
+tracker/                People tracking: tracker, installer, service, settings
 config/as-found/        Verbatim copies of the config files on the live Pi
 docs/INSTALL.md         Build a new one from a blank SD card
 docs/OPERATIONS.md      Day-to-day: stop/start, tune, wifi, troubleshooting
+docs/TRACKING.md        People tracking: install, calibrate, test, troubleshoot
 docs/AS-FOUND.md        What was actually on the Pi when it was surveyed
 docs/VM-TEST.md         How the install was verified in an emulator
 ```
@@ -68,6 +71,13 @@ cd /boot/Pi_Eyes && sudo xinit /usr/bin/python3 tri-eyes.py :0 &
 
 # Why didn't they start?
 journalctl -b -u rc-local --no-pager | tail -40
+
+# Make the eyes look screen-right for 2 seconds (gaze input)
+echo "1 0" | nc -u -w0 eyes.local 5005
+
+# People tracker
+journalctl -u house-eyes-tracker -f       # live log
+# calibration view: http://eyes.local:8080/
 
 # Projector output off / on without stopping anything
 vcgencmd display_power 0

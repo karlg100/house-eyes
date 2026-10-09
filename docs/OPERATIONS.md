@@ -69,6 +69,15 @@ picks the projector's preferred mode, currently 1920x1080. The eye program
 draws at whatever X is running, and the eye positions scale with the width.
 Check with `sudo DISPLAY=:0 xrandr`.
 
+## Gaze input
+
+`tri-eyes.py` listens on UDP port 5005 for `x y` (each -1 to 1, screen
+coordinates: x -1 = screen left, y -1 = down). While messages arrive the eyes
+ease toward that point; 2 seconds after the last one they wander again. The
+people tracker uses this (see [TRACKING.md](TRACKING.md)); you can too:
+`echo "1 0" | nc -u -w0 eyes.local 5005`. Start with `--gaze-port 0` to turn
+it off.
+
 ## Other eye programs
 
 | File | What it shows |

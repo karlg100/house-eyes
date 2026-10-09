@@ -1,0 +1,64 @@
+# house-eyes tracker settings. Copied to /etc/house-eyes/tracker.ini on first
+# install; edit that copy, then:  sudo systemctl restart house-eyes-tracker
+# Anything left out uses the default shown here.
+
+[camera]
+# picamera2             Pi Camera Module on the ribbon connector
+# usb:0                 USB webcam (/dev/video0)
+# rtsp://user:pw@ip/... network camera
+# file:/path/video.mp4  recorded video, looped (for testing)
+source = picamera2
+width = 1280
+height = 720
+# 0, 90, 180 or 270, and/or mirror, if the camera is mounted that way
+rotate = 0
+hflip = no
+
+[detector]
+# myriad: person detector on the Neural Compute Stick 2
+# motion: anything that moves, on the CPU (fallback if the stick is missing)
+type = myriad
+model = /opt/house-eyes/models/person-detection-retail-0013.xml
+# 0-1; raise if it sees people that aren't there, lower if it misses people
+confidence = 0.55
+# ignore detections shorter than this fraction of the picture height
+min_height = 0.08
+requests = 2
+
+[target]
+# seconds without seeing the watched person before giving up on them
+lost_after = 0.8
+# seconds on one person before the eyes may switch to someone else
+switch_after = 8.0
+# how far (fraction of picture width) a detection can jump and still be the same person
+gate = 0.25
+# seconds of easing on the target position (higher = calmer, laggier)
+smooth = 0.15
+# seconds to look ahead of a walking person (hides camera/detector lag)
+lead = 0.15
+
+[calibration]
+# Where in the camera picture (0 = left edge, 1 = right edge) the eyes
+# should look fully left / fully right on the projected screen. Stand at
+# each end of the sidewalk and read x off the preview page.
+x_left = 0.0
+x_right = 1.0
+# yes if the eyes look the opposite way to the person
+flip_x = no
+# Gaze height (-1 down .. 1 up) when the person's feet are at the top /
+# bottom of the picture.
+y_at_top = -0.1
+y_at_bottom = -0.7
+# Only track people whose feet are inside this box (fractions: x0,y0,x1,y1).
+roi = 0,0,1,1
+
+[output]
+# where tri-eyes.py listens for gaze messages
+host = 127.0.0.1
+port = 5005
+rate = 15
+
+[preview]
+# browser view for calibration: http://eyes.local:8080/  (0 = off)
+port = 8080
+fps = 5

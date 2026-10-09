@@ -64,6 +64,15 @@ If the repo isn't on GitHub yet, copy it over instead:
 After the reboot the projector should show a few lines of boot text and then
 the three eyes, roughly 15 to 20 seconds after power-on.
 
+## 4. Optional: people tracking
+
+```sh
+sudo ./tracker/install-tracker.sh
+sudo reboot
+```
+
+See [TRACKING.md](TRACKING.md) for what it installs and how to calibrate.
+
 ## What install.sh does
 
 It is a non-interactive version of Adafruit's `pi-eyes.sh` (answers: Pi 4,
