@@ -69,6 +69,7 @@ id house-eyes >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/
 usermod -a -G video,users house-eyes
 mkdir -p /opt/house-eyes/tracker /etc/house-eyes
 install -m 755 "$HERE/house_eyes_tracker.py" /opt/house-eyes/tracker/
+install -m 644 "$HERE/people.py" /opt/house-eyes/tracker/
 install -m 644 "$HERE/tracker.ini.example" /etc/house-eyes/tracker.ini.example
 [ -f /etc/house-eyes/tracker.ini ] || install -m 644 "$HERE/tracker.ini.example" /etc/house-eyes/tracker.ini
 install -m 644 "$HERE/house-eyes-tracker.service" /etc/systemd/system/

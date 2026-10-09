@@ -25,17 +25,39 @@ confidence = 0.55
 min_height = 0.08
 requests = 2
 
-[target]
-# seconds without seeing the watched person before giving up on them
-lost_after = 0.8
-# seconds on one person before the eyes may switch to someone else
-switch_after = 8.0
-# how far (fraction of picture width) a detection can jump and still be the same person
-gate = 0.25
-# seconds of easing on the target position (higher = calmer, laggier)
-smooth = 0.15
+[tracking]
+# seconds a person can go unseen (e.g. hidden behind someone) before
+# they're forgotten
+lost_after = 1.0
+# detections needed before a new person counts (filters one-off false alarms)
+confirm_hits = 2
+# 0-1: how much each new detection moves a person's box (lower = calmer)
+smooth = 0.5
 # seconds to look ahead of a walking person (hides camera/detector lag)
 lead = 0.15
+
+[attention]
+# yes: with 2 or more people, each eye picks its own person (left to right).
+# no: all three eyes always watch the same person.
+split = yes
+# seconds an eye stays with someone before it may move to someone more
+# interesting (picked at random between these)
+dwell_min = 3.0
+dwell_max = 7.0
+# what's interesting: new arrivals, and people who stop to look
+newcomer_bonus = 1.0
+still_bonus = 0.8
+# crowd mode: at crowd_enter people or more, each eye darts between random
+# people with wide pupils; back to normal at crowd_exit or fewer
+crowd_enter = 7
+crowd_exit = 5
+glance_min = 0.5
+glance_max = 1.5
+crowd_pupil = 0.95
+# pupils widen when someone gets close (taller than this fraction of the
+# picture); 0 turns this off
+close_height = 0.45
+close_pupil = 0.85
 
 [calibration]
 # Where in the camera picture (0 = left edge, 1 = right edge) the eyes

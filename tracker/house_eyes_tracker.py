@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """house-eyes people tracker.
 
-Reads a camera, finds people, picks one to watch, and sends the eyes a gaze
-point over UDP ("x y", each -1..1) several times a second. tri-eyes.py eases
-toward that point and goes back to wandering when the messages stop.
+Reads a camera, finds people, follows each of them with a stable ID, decides
+who each of the three eyes should watch, and sends tri-eyes.py the gaze
+points over UDP several times a second (see people.py for the behaviour).
+The eyes go back to wandering on their own when the messages stop.
 
-    camera -> detector (NCS2 or motion) -> target picker -> calibration -> UDP
+    camera -> detector (NCS2 or motion) -> people.py (tracking, attention,
+    calibration) -> UDP
 
 Run by systemd as house-eyes-tracker.service. For a live annotated view while
 calibrating, open http://eyes.local:8080/ in a browser.
@@ -26,6 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
 import numpy as np
+
+from people import Attention, Calibration, PeopleTracker, gaze_message
 
 log = logging.getLogger("tracker")
 
@@ -50,12 +54,25 @@ DEFAULTS = {
         "min_height": "0.08",   # ignore people shorter than this fraction of the frame
         "requests": "2",        # parallel inferences on the stick
     },
-    "target": {
-        "lost_after": "0.8",    # seconds without a match before the target is dropped
-        "switch_after": "8.0",  # seconds on one person before allowing a switch
-        "gate": "0.25",         # max jump (fraction of frame width) to count as same person
-        "smooth": "0.15",       # seconds; easing of the target position
+    "tracking": {
+        "lost_after": "1.0",    # seconds unseen before a person is forgotten
+        "confirm_hits": "2",    # detections before a new person counts
+        "smooth": "0.5",        # 0..1, weight given to each new detection
         "lead": "0.15",         # seconds; look ahead along the walking direction
+    },
+    "attention": {
+        "split": "yes",         # yes: with 2-3+ people each eye picks its own person
+        "dwell_min": "3.0",     # seconds an eye stays on a person before it may move on
+        "dwell_max": "7.0",
+        "newcomer_bonus": "1.0",  # how strongly new arrivals attract attention
+        "still_bonus": "0.8",   # ... and people who stop to look
+        "crowd_enter": "7",     # this many people or more -> crowd mode
+        "crowd_exit": "5",      # back to normal at this many or fewer
+        "glance_min": "0.5",    # crowd mode: seconds between darting glances
+        "glance_max": "1.5",
+        "crowd_pupil": "0.95",  # crowd mode pupil size (0 small .. 1 wide)
+        "close_height": "0.45", # someone this tall in frame is "close" (0 = off)
+        "close_pupil": "0.85",  # ... and the pupils widen to this
     },
     "calibration": {
         # Camera x (0 = left edge of frame, 1 = right edge) that should make
@@ -285,78 +302,6 @@ def make_detector(cfg):
 
 
 # --------------------------------------------------------------------------
-# Target selection: stick with one person, follow them smoothly, and look a
-# little ahead along their direction of travel to hide camera/detector lag.
-
-class TargetPicker:
-    def __init__(self, cfg, det_cfg, roi):
-        self.lost_after = float(cfg["lost_after"])
-        self.switch_after = float(cfg["switch_after"])
-        self.gate = float(cfg["gate"])
-        self.smooth = float(cfg["smooth"])
-        self.lead = float(cfg["lead"])
-        self.min_h = float(det_cfg["min_height"])
-        self.roi = roi
-        self.pos = None      # smoothed (x, y_feet)
-        self.vel = (0.0, 0.0)
-        self.seen = 0.0      # last time the target was matched
-        self.since = 0.0     # when we started following this target
-        self.last_t = 0.0
-
-    def update(self, boxes, t):
-        x0, y0, x1, y1 = self.roi
-        people = []
-        for b in boxes:
-            cx, feet, height = (b[0] + b[2]) / 2, b[3], b[3] - b[1]
-            if height >= self.min_h and x0 <= cx <= x1 and y0 <= feet <= y1:
-                people.append((cx, feet, height))
-        if self.pos is not None and t - self.seen > self.lost_after:
-            log.info("target lost")
-            self.pos = None
-        if not people:
-            return
-        if self.pos is None:
-            pick = max(people, key=lambda p: p[2])  # nearest = tallest
-            self.pos, self.vel, self.since = (pick[0], pick[1]), (0.0, 0.0), t
-            self.seen = self.last_t = t
-            log.info("target acquired at x=%.2f (%d people in view)", pick[0], len(people))
-            return
-        near = min(people, key=lambda p: abs(p[0] - self.pos[0]))
-        if abs(near[0] - self.pos[0]) > self.gate:
-            if t - self.since < self.switch_after:
-                return      # someone else, far away: keep watching ours for now
-            self.pos, self.vel, self.since = (near[0], near[1]), (0.0, 0.0), t
-            self.seen = self.last_t = t
-            log.info("target switched to x=%.2f", near[0])
-            return
-        dt = max(t - self.last_t, 1e-3)
-        k = 1.0 - math.exp(-dt / max(self.smooth, 1e-3))
-        nx = self.pos[0] + (near[0] - self.pos[0]) * k
-        ny = self.pos[1] + (near[1] - self.pos[1]) * k
-        kv = 1.0 - math.exp(-dt / 0.5)
-        self.vel = (self.vel[0] + ((nx - self.pos[0]) / dt - self.vel[0]) * kv,
-                    self.vel[1] + ((ny - self.pos[1]) / dt - self.vel[1]) * kv)
-        self.pos, self.seen, self.last_t = (nx, ny), t, t
-
-    def aim(self):
-        if self.pos is None:
-            return None
-        return (self.pos[0] + self.vel[0] * self.lead,
-                self.pos[1] + self.vel[1] * self.lead)
-
-
-def to_gaze(aim, cal):
-    x, feet = aim
-    span = float(cal["x_right"]) - float(cal["x_left"])
-    gx = -1.0 + 2.0 * (x - float(cal["x_left"])) / (span if abs(span) > 1e-6 else 1.0)
-    if cfg_bool(cal["flip_x"]):
-        gx = -gx
-    top, bottom = float(cal["y_at_top"]), float(cal["y_at_bottom"])
-    gy = top + (bottom - top) * min(max(feet, 0.0), 1.0)
-    return max(-1.0, min(1.0, gx)), max(-1.0, min(1.0, gy))
-
-
-# --------------------------------------------------------------------------
 # Browser preview for calibration: http://<pi>:8080/
 
 class Preview:
@@ -387,9 +332,10 @@ class Preview:
                 body = (b"<!doctype html><title>house-eyes tracker</title>"
                         b"<body style='margin:0;background:#111;color:#ccc;font:14px sans-serif'>"
                         b"<img id=f style='width:100%' src='/frame.jpg'>"
-                        b"<p style='padding:8px'>Green box: person being watched. "
-                        b"Yellow: other people. Blue frame: region of interest. "
-                        b"Top bar: where the eyes are told to look.</p>"
+                        b"<p style='padding:8px'>Dots under a person show which eye watches "
+                        b"them: red = screen-left eye, green = centre, blue = screen-right. "
+                        b"White boxes: watched; orange: not watched. Blue frame: region of "
+                        b"interest. Top bar: where each eye is told to look (same colours).</p>"
                         b"<script>setInterval(()=>{f.src='/frame.jpg?'+Date.now()},250)</script>")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
@@ -403,26 +349,33 @@ class Preview:
     def wanted(self, t):
         return t >= self.next
 
-    def show(self, frame, boxes, picker, gaze, roi, t):
+    EYE_COLOURS = ((60, 60, 255), (60, 255, 60), (255, 120, 60))   # L, C, R (BGR)
+
+    def show(self, frame, people, mode, eyes, pupil, roi, t):
         self.next = t + self.interval
         img = cv2.resize(frame, (640, int(640 * frame.shape[0] / frame.shape[1])))
         h, w = img.shape[:2]
         cv2.rectangle(img, (int(roi[0] * w), int(roi[1] * h)),
                       (int(roi[2] * w) - 1, int(roi[3] * h) - 1), (255, 128, 0), 1)
-        aim = picker.aim()
-        for b in boxes:
-            cx = (b[0] + b[2]) / 2
-            mine = picker.pos is not None and abs(cx - picker.pos[0]) < 0.05
+        watched = {}
+        for i, (p, _) in enumerate(eyes or []):
+            watched.setdefault(p.id, []).append(i)
+        for p in people:
+            b = p.box
             cv2.rectangle(img, (int(b[0] * w), int(b[1] * h)), (int(b[2] * w), int(b[3] * h)),
-                          (0, 255, 0) if mine else (0, 220, 255), 2)
-        if aim is not None:
-            cv2.circle(img, (int(aim[0] * w), int(aim[1] * h)), 6, (0, 0, 255), -1)
-        cv2.rectangle(img, (0, 0), (w, 14), (40, 40, 40), -1)
-        if gaze is not None:
-            gx = int((gaze[0] + 1) / 2 * w)
-            cv2.rectangle(img, (gx - 4, 0), (gx + 4, 14), (0, 0, 255), -1)
-            cv2.putText(img, "gaze %+.2f %+.2f" % gaze, (6, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (255, 255, 255), 1)
+                          (255, 255, 255) if p.id in watched else (0, 200, 255), 1)
+            cv2.putText(img, "%d x=%.2f" % (p.id, p.cx), (int(b[0] * w) + 2, int(b[1] * h) + 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            for k, i in enumerate(watched.get(p.id, [])):
+                cv2.circle(img, (int(p.cx * w) - 8 + 8 * k, int(p.feet * h)), 5,
+                           self.EYE_COLOURS[i], -1)
+        cv2.rectangle(img, (0, 0), (w, 16), (40, 40, 40), -1)
+        for i, (_, g) in enumerate(eyes or []):
+            gx = int((g[0] + 1) / 2 * w)
+            cv2.rectangle(img, (gx - 3, 2 + 4 * i), (gx + 3, 6 + 4 * i), self.EYE_COLOURS[i], -1)
+        cv2.putText(img, "%s  people=%d%s" % (mode, len(people),
+                                               "  pupil=%.2f" % pupil if pupil is not None else ""),
+                    (6, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok:
             with self.lock:
@@ -465,7 +418,22 @@ def main():
     source = make_source(cfg["camera"])
     source.start()
     detector = make_detector(cfg["detector"])
-    picker = TargetPicker(cfg["target"], cfg["detector"], roi)
+    trk, att, cal = cfg["tracking"], cfg["attention"], cfg["calibration"]
+    tracker = PeopleTracker(lost_after=float(trk["lost_after"]),
+                            confirm_hits=int(trk["confirm_hits"]),
+                            smooth=float(trk["smooth"]),
+                            min_height=float(cfg["detector"]["min_height"]), roi=roi)
+    attention = Attention(dwell_min=float(att["dwell_min"]), dwell_max=float(att["dwell_max"]),
+                          newcomer_bonus=float(att["newcomer_bonus"]),
+                          still_bonus=float(att["still_bonus"]), split=cfg_bool(att["split"]),
+                          crowd_enter=int(att["crowd_enter"]), crowd_exit=int(att["crowd_exit"]),
+                          glance_min=float(att["glance_min"]), glance_max=float(att["glance_max"]),
+                          crowd_pupil=float(att["crowd_pupil"]),
+                          close_height=float(att["close_height"]),
+                          close_pupil=float(att["close_pupil"]), lead=float(trk["lead"]))
+    calibration = Calibration(x_left=float(cal["x_left"]), x_right=float(cal["x_right"]),
+                              flip_x=cfg_bool(cal["flip_x"]), y_at_top=float(cal["y_at_top"]),
+                              y_at_bottom=float(cal["y_at_bottom"]))
     pport = int(cfg["preview"]["port"])
     preview = Preview(pport, float(cfg["preview"]["fps"])) if pport else None
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -473,7 +441,8 @@ def main():
     send_every = 1.0 / float(cfg["output"]["rate"])
     next_send = 0.0
     seq, frames, dets, last_stats = 0, 0, 0, time.time()
-    last_boxes, gaze = [], None
+    mode, eyes, pupil, last_mode = "idle", None, None, "idle"
+    mode_secs, peak = {}, 0
 
     while True:
         frame, seq, stamp = source.latest(seq)
@@ -482,22 +451,27 @@ def main():
             frames += 1
             for t, boxes in detector.submit(frame, stamp):
                 dets += 1
-                last_boxes = boxes
-                picker.update(boxes, t)
-        aim = picker.aim()
-        gaze = to_gaze(aim, cfg["calibration"]) if aim is not None else None
-        if gaze is not None and now >= next_send:
+                tracker.update(boxes, t)
+        people = tracker.confirmed()
+        peak = max(peak, len(people))
+        prev_t = getattr(attention, "last_t", None) or now
+        mode, eyes, pupil = attention.update(people, calibration, now)
+        mode_secs[mode] = mode_secs.get(mode, 0.0) + max(0.0, now - prev_t)
+        if mode != last_mode:
+            log.info("mode: %s -> %s (%d people)", last_mode, mode, len(people))
+            last_mode = mode
+        if eyes and now >= next_send:
             next_send = now + send_every
             if not args.no_send:
-                sock.sendto(("%.3f %.3f" % gaze).encode(), dest)
+                sock.sendto(gaze_message(eyes, pupil).encode(), dest)
         if preview and frame is not None and preview.wanted(now):
-            preview.show(frame, last_boxes, picker, gaze, roi, now)
+            preview.show(frame, people, mode, eyes, pupil, roi, now)
         if now - last_stats >= args.stats:
             el = now - last_stats
-            log.info("stats: camera %.1f fps, detector %.1f fps, target %s",
-                     frames / el, dets / el,
-                     "x=%.2f gaze=%+.2f" % (picker.pos[0], gaze[0]) if gaze else "none")
-            frames, dets, last_stats = 0, 0, now
+            log.info("stats: camera %.1f fps, detector %.1f fps, people now %d (peak %d), %s",
+                     frames / el, dets / el, len(people), peak,
+                     ", ".join("%s %.0f%%" % (m, 100 * v / el) for m, v in sorted(mode_secs.items())))
+            frames, dets, last_stats, peak, mode_secs = 0, 0, now, 0, {}
 
 
 if __name__ == "__main__":

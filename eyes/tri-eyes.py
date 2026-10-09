@@ -59,18 +59,26 @@ if JOYSTICK_X_IN >= 0 or JOYSTICK_Y_IN >= 0 or PUPIL_IN >= 0:
 
 
 # GAZE INPUT (house-eyes) --------------------------------------------------
-# A tracker (tracker/house_eyes_tracker.py) sends UDP datagrams "x y" with
-# x, y in -1..1, in the projector's own screen coordinates (x: -1 = screen
+# The people tracker (tracker/house_eyes_tracker.py) sends UDP datagrams:
+#   "x y"                    all three eyes look at one point
+#   "xl yl xc yc xr yr"      each eye gets its own point (screen-left,
+#                            centre, screen-right eye)
+#   ... "p=0.9"              optional: pupil size 0 (small) .. 1 (wide)
+# x, y are -1..1 in the projector's own screen coordinates (x: -1 = screen
 # left, +1 = screen right; y: -1 = down, +1 = up). If the image on the sheet
-# is mirrored (rear projection), flip x in the tracker config, not here. While messages keep arriving the eyes
-# ease toward that point; after GAZE_TIMEOUT seconds of silence they go
-# back to wandering on their own. Test by hand:
+# is mirrored (rear projection), flip x in the tracker config, not here.
+# While messages keep arriving the eyes ease toward their points; after
+# GAZE_TIMEOUT seconds of silence they go back to wandering on their own.
+# Test by hand:
 #   echo "0.8 0" | nc -u -w0 eyes.local 5005
+#   echo "-1 0 0 0.5 1 0 p=1" | nc -u -w0 eyes.local 5005
 
 GAZE_PORT    = 5005   # UDP port; 0 disables gaze input
 GAZE_BIND    = "0.0.0.0"
 GAZE_TIMEOUT = 2.0    # seconds without a message before eyes wander again
 GAZE_EASE    = 0.12   # seconds; time constant for easing toward the target
+PUPIL_EASE   = 0.4    # seconds; easing for tracker-driven pupil size
+BLEND_TIME   = 0.6    # seconds to merge per-eye gaze back into one
 
 class GazeInput(threading.Thread):
 	def __init__(self, port, bind=GAZE_BIND):
@@ -84,15 +92,30 @@ class GazeInput(threading.Thread):
 	def run(self):
 		while True:
 			try:
-				data = self.sock.recv(256).decode("ascii", "ignore").split()
-				x = max(-1.0, min(1.0, float(data[0])))
-				y = max(-1.0, min(1.0, float(data[1]))) if len(data) > 1 else 0.0
+				words = self.sock.recv(256).decode("ascii", "ignore").split()
+				pupil = None
+				nums = []
+				for w in words:
+					if w.startswith("p="):
+						pupil = max(0.0, min(1.0, float(w[2:])))
+					else:
+						nums.append(max(-1.0, min(1.0, float(w))))
+				if len(nums) >= 6:
+					pts = [(nums[0], nums[1]), (nums[2], nums[3]), (nums[4], nums[5])]
+					perEye = True
+				elif len(nums) >= 1:
+					pt = (nums[0], nums[1] if len(nums) > 1 else 0.0)
+					pts = [pt, pt, pt]
+					perEye = False
+				else:
+					continue
 			except Exception:
 				continue
 			with self.lock:
-				self.target = (x, y)
+				self.target = (pts, perEye, pupil)
 				self.stamp = time.time()
 	def get(self, now):
+		"""None, or ([(x,y) screen-left, centre, screen-right], perEye, pupil)."""
 		with self.lock:
 			if self.target is None or now - self.stamp > GAZE_TIMEOUT:
 				return None
@@ -109,6 +132,20 @@ if _gaze_args.gaze_port > 0:
 	except OSError as e:
 		print("Gaze input disabled:", e)
 lastFrameTime = time.time()
+perEyeUntil   = 0.0    # draw the eyes independently until this time
+wasPerEye     = False
+pupilCur      = 0.5    # pupil size actually drawn (eases between sources)
+pupilBlendTil = 0.0
+
+def gazeToEye(pt):
+	"""Screen-space gaze (-1..1) -> eye rotation (degrees, max 30)."""
+	tx = -pt[0] * 30.0   # positive rotation turns the pupils toward screen-left
+	ty = pt[1] * 30.0
+	r = math.sqrt(tx * tx + ty * ty)
+	if r > 30.0:
+		tx *= 30.0 / r
+		ty *= 30.0 / r
+	return tx, ty
 
 
 # Load SVG file, extract paths & convert to point lists --------------------
@@ -459,7 +496,7 @@ def frame(p):
 	global trackingPos
 	global trackingPosC
 	global trackingPosR
-	global lastFrameTime
+	global lastFrameTime, perEyeUntil, wasPerEye, pupilCur, pupilBlendTil
 
 	DISPLAY.loop_running()
 
@@ -475,17 +512,23 @@ def frame(p):
 	gaze = gazeInput.get(now) if gazeInput else None
 	frameDt = now - lastFrameTime
 	lastFrameTime = now
+	k = 1.0 - math.exp(-max(frameDt, 0.0) / GAZE_EASE)
 	if gaze is not None:
-		# Eye position from the people tracker: ease toward the target
-		tx = -gaze[0] * 30.0   # curX > 0 turns the pupils toward screen-left
-		ty = gaze[1] * 30.0
-		r = math.sqrt(tx * tx + ty * ty)
-		if r > 30.0:
-			tx *= 30.0 / r
-			ty *= 30.0 / r
-		k = 1.0 - math.exp(-max(frameDt, 0.0) / GAZE_EASE)
-		curX += (tx - curX) * k
-		curY += (ty - curY) * k
+		# Eye positions from the people tracker: ease toward the targets.
+		# Naming is from the creature's point of view: rightEye (curXR) is
+		# drawn on screen-LEFT, leftEye (curX) on screen-RIGHT (checked with
+		# screenshots on the Pi), centerEye (curXC) in the middle.
+		pts, perEye, gazePupil = gaze
+		(sx, sy), (cx, cy), (rx, ry) = [gazeToEye(pt) for pt in pts]
+		curXR += (sx - curXR) * k   # screen-left eye
+		curYR += (sy - curYR) * k
+		curXC += (cx - curXC) * k   # centre eye
+		curYC += (cy - curYC) * k
+		curX  += (rx - curX)  * k   # screen-right eye
+		curY  += (ry - curY)  * k
+		if perEye:
+			perEyeUntil = now + BLEND_TIME
+		wasPerEye = perEye
 		# Park the autonomous motion here so it resumes smoothly later
 		startX = destX = curX
 		startY = destY = curY
@@ -525,7 +568,34 @@ def frame(p):
 				isMoving     = True
 
 		# repeat for other eye if CRAZY_EYES
-	if CRAZY_EYES:
+	if gaze is None:
+		if wasPerEye:          # tracker just went quiet: merge the eyes smoothly
+			perEyeUntil = now + BLEND_TIME
+			wasPerEye = False
+		if not CRAZY_EYES:
+			if now < perEyeUntil:
+				curXC += (curX - curXC) * k
+				curYC += (curY - curYC) * k
+				curXR += (curX - curXR) * k
+				curYR += (curY - curYR) * k
+			else:
+				curXC, curYC, curXR, curYR = curX, curY, curX, curY
+	perEyeDraw = CRAZY_EYES or now < perEyeUntil
+
+	# Pupil size: the tracker can override the automatic pupil motion
+	gazePupil = gaze[2] if gaze is not None else None
+	kp = 1.0 - math.exp(-max(frameDt, 0.0) / PUPIL_EASE)
+	if gazePupil is not None:
+		pupilCur += (gazePupil - pupilCur) * kp
+		pupilBlendTil = now + 1.5
+		p = pupilCur
+	elif now < pupilBlendTil:
+		pupilCur += (p - pupilCur) * kp
+		p = pupilCur
+	else:
+		pupilCur = p
+
+	if CRAZY_EYES and gaze is None:
             if isMovingR == True:
                 if dtR <= moveDurationR:
                     scale        = (now - startTimeR) / moveDurationR
@@ -694,7 +764,7 @@ def frame(p):
 		if   n < 0.0: n = 0.0
 		elif n > 1.0: n = 1.0
 		trackingPos = (trackingPos * 3.0 + n) * 0.25
-		if CRAZY_EYES:
+		if perEyeDraw:
 			n = 0.4 - curYC / 60.0
 			if   n < 0.0: n = 0.0
 			elif n > 1.0: n = 1.0
@@ -719,8 +789,9 @@ def frame(p):
 		if blinkStateCenter == 2: n = 1.0 - n
 	else:
 		n = 0.0
-	newCenterUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-	newCenterLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
+	tpC = trackingPosC if perEyeDraw else trackingPos
+	newCenterUpperLidWeight = tpC + (n * (1.0 - tpC))
+	newCenterLowerLidWeight = (1.0 - tpC) + (n * tpC)
 
 
 	if blinkStateRight:
@@ -729,16 +800,9 @@ def frame(p):
 		if blinkStateRight == 2: n = 1.0 - n
 	else:
 		n = 0.0
-	if CRAZY_EYES:
-		newCenterUpperLidWeight = trackingPosC + (n * (1.0 - trackingPosC))
-		newCenterLowerLidWeight = (1.0 - trackingPosC) + (n * trackingPosC)
-		newRightUpperLidWeight = trackingPosR + (n * (1.0 - trackingPosR))
-		newRightLowerLidWeight = (1.0 - trackingPosR) + (n * trackingPosR)
-	else:
-		newCenterUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-		newCenterLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
-		newRightUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-		newRightLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
+	tpR = trackingPosR if perEyeDraw else trackingPos
+	newRightUpperLidWeight = tpR + (n * (1.0 - tpR))
+	newRightLowerLidWeight = (1.0 - tpR) + (n * tpR)
 
 	if (luRegen or (abs(newLeftUpperLidWeight - prevLeftUpperLidWeight) >=
 	  upperLidRegenThreshold)):
@@ -851,7 +915,7 @@ def frame(p):
 	convergence = 2.0
 
 	# Right eye (on screen left)
-	if CRAZY_EYES:
+	if perEyeDraw:
 		rightIris.rotateToX(curYR)
 		rightIris.rotateToY(curXR - convergence)
 		rightIris.draw()
@@ -866,7 +930,7 @@ def frame(p):
 	rightEye.draw()
 
 	# Center eye (center screen)
-	if CRAZY_EYES:
+	if perEyeDraw:
 		centerIris.rotateToX(curYC)
 		centerIris.rotateToY(curXC - convergence)
 		centerIris.draw()

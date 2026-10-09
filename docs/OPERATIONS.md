@@ -71,12 +71,17 @@ Check with `sudo DISPLAY=:0 xrandr`.
 
 ## Gaze input
 
-`tri-eyes.py` listens on UDP port 5005 for `x y` (each -1 to 1, screen
-coordinates: x -1 = screen left, y -1 = down). While messages arrive the eyes
-ease toward that point; 2 seconds after the last one they wander again. The
-people tracker uses this (see [TRACKING.md](TRACKING.md)); you can too:
-`echo "1 0" | nc -u -w0 eyes.local 5005`. Start with `--gaze-port 0` to turn
-it off.
+`tri-eyes.py` listens on UDP port 5005 for gaze targets, in screen
+coordinates from -1 to 1 (x -1 = screen left, y -1 = down):
+
+- `x y`: all three eyes look at one point.
+- `xl yl xc yc xr yr`: one point per eye (screen-left, centre, screen-right).
+- Either form can end with `p=0.9` to set the pupil size (0 small to 1 wide).
+
+While messages arrive the eyes ease toward their points; 2 seconds after the
+last one they wander again. The people tracker uses this (see
+[TRACKING.md](TRACKING.md)); you can too: `echo "1 0" | nc -u -w0 eyes.local 5005`.
+Start `tri-eyes.py` with `--gaze-port 0` to turn it off.
 
 ## Other eye programs
 

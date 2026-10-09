@@ -1,14 +1,16 @@
 # People tracking
 
 A camera watches the sidewalk. The Intel Neural Compute Stick 2 (NCS2) finds
-people in each frame, the tracker picks one, and the three eyes turn to follow
-them as they walk past. When nobody is in view, the eyes go back to wandering
-on their own.
+people in each frame, the tracker follows each of them, and the three eyes
+watch them: all together when one person walks by, each eye on its own person
+when there are several, and darting around when there's a crowd. When nobody
+is in view, the eyes go back to wandering on their own.
 
 ```
-camera ──> house_eyes_tracker.py ──UDP "x y"──> tri-eyes.py
-           (NCS2 person detector,               (eases toward the point;
-            target picking, calibration)          wanders after 2 s of silence)
+camera ──> house_eyes_tracker.py ──────UDP──────> tri-eyes.py
+           NCS2 person detector                   eases each eye toward its
+           people.py: tracking with IDs,          point; wanders after 2 s
+           attention, calibration                 of silence
 ```
 
 The two programs are independent. If the tracker stops, crashes, or has no
@@ -18,7 +20,8 @@ camera, the eyes carry on exactly as before.
 
 | Part | State |
 |---|---|
-| Gaze input in `tri-eyes.py` | Done and running on the Pi |
+| Gaze input in `tri-eyes.py` (one point, or one per eye, plus pupil size) | Done and running on the Pi |
+| Multi-person tracking, attention, split eyes, crowd mode | Done; tested in simulation and on recorded video on the Pi |
 | NCS2 + OpenVINO 2022.3.2 | Installed and working on the Pi |
 | Tracker service | Installed, enabled, waiting for a camera |
 | Camera | Not attached yet. Config is set for a Pi Camera Module (`source = picamera2`) |
@@ -45,7 +48,7 @@ sudo reboot                           # only needed the first time (32-bit kerne
 | OpenVINO 2022.3.2 runtime (armhf), checksum-verified | `/opt/intel/l_openvino_toolkit_debian9_2022.3.2...`, symlinked as `/opt/intel/openvino_2022` |
 | NCS2 udev rule | `/etc/udev/rules.d/97-myriad-usbboot.rules` |
 | `person-detection-retail-0013` model (FP16), checksum-verified | `/opt/house-eyes/models/` |
-| Tracker | `/opt/house-eyes/tracker/house_eyes_tracker.py` |
+| Tracker | `/opt/house-eyes/tracker/house_eyes_tracker.py`, `people.py` |
 | Settings | `/etc/house-eyes/tracker.ini` (never overwritten on re-install) |
 | Service | `house-eyes-tracker.service`, runs as user `house-eyes` |
 | Kernel | `arm_64bit=0` in `/boot/config.txt` (see below) |
@@ -76,31 +79,77 @@ help a little; not measured.
 
 ## How the tracker decides where to look
 
-1. **Detect.** Every frame goes to the stick. People below `min_height` or
-   with their feet outside `roi` are ignored.
-2. **Pick.** The tallest person (nearest) becomes the target. The tracker stays
-   with them until they're out of view for `lost_after` seconds. It won't jump
-   to someone else for `switch_after` seconds unless the target is lost.
-3. **Smooth and lead.** The position is eased (`smooth`), and the eyes aim a
-   little ahead of a walking person (`lead`) to hide the camera and detector
-   delay.
-4. **Calibrate.** Horizontal camera position maps to gaze x through `x_left`
-   and `x_right`. How low the person's feet are in the frame maps to gaze y
-   through `y_at_top` and `y_at_bottom`.
-5. **Send.** `x y` (each -1 to 1) goes over UDP to `tri-eyes.py` on port 5005,
-   15 times a second while there's a target. Nothing is sent when there isn't.
+**1. Detect.** Every frame goes to the stick, which returns a box per person.
+People shorter than `min_height` or with their feet outside `roi` are ignored.
+
+**2. Track.** `people.py` matches each box to a person seen in earlier frames,
+using where they were heading, how much the boxes overlap, and how big they
+are (people at different distances are different sizes). So two people passing
+each other keep their own IDs, and someone briefly hidden behind another person
+is remembered for `lost_after` seconds. A new person must be seen
+`confirm_hits` times before they count, which filters out one-frame false
+alarms.
+
+**3. Decide who to watch.** It depends on how many people are in view:
+
+| People | Mode | What the eyes do |
+|---|---|---|
+| 0 | idle | Nothing is sent; the eyes wander on their own |
+| 1 | single | All three eyes watch that person together |
+| 2 | split | The screen-left eye takes the left person, the screen-right eye the right person, and the centre eye picks whichever is more interesting, switching every few seconds |
+| 3 to 6 | split | The three most interesting people each get an eye, ordered left to right so the eyes don't cross. Every `dwell_min` to `dwell_max` seconds an eye may move on to someone more interesting |
+| `crowd_enter` (7) or more | crowd | Each eye darts between random people every `glance_min` to `glance_max` seconds, pupils wide. Back to split at `crowd_exit` (5) or fewer |
+
+"Interesting" means: nearer (taller in the picture), newly arrived (fades over
+a few seconds), or standing still to look (after a second). People the eyes
+have already watched for a while become less interesting, so attention moves
+around. When two watched people walk past each other, each eye stays with its
+person; the eyes are only re-sorted if they'd stay crossed for more than a
+second.
+
+If anyone gets close (taller than `close_height` of the picture), the pupils
+widen to `close_pupil`.
+
+**4. Calibrate.** A person's horizontal position maps to gaze x through
+`x_left` and `x_right`. How low their feet are in the frame maps to gaze y
+through `y_at_top` and `y_at_bottom`. The eyes aim a little ahead of a walking
+person (`lead`) to hide the camera and detector delay.
+
+**5. Send.** About 15 times a second while anyone is in view, the tracker sends
+`tri-eyes.py` either `x y` (all eyes on one point) or `xl yl xc yc xr yr` (one
+point per eye, screen-left to screen-right), optionally followed by `p=0.9` for
+the pupil size.
+
+### Simulation
+
+`tracker/sim_people.py` exercises the tracking and attention logic with
+simulated pedestrians, without a camera or the stick. It runs anywhere Python 3
+does:
+
+```sh
+cd tracker && python3 sim_people.py        # add -v to print what's sent each second
+```
+
+It reports, per scenario (one walker, 4 spread out with 2 standing, 2
+crossing, a busy sidewalk, a crowd of about 25): mode changes, how often each
+eye switches person, ID swaps, and how often the eyes are crossed. Use it to
+check the effect of changing the `[attention]` defaults before trying them on
+the street.
 
 ## Calibrating (once the camera is mounted)
 
 1. On a phone or laptop on the home network, open **http://eyes.local:8080/**.
-   It shows the camera view with boxes on detected people (green = being
-   watched), the region of interest (blue), and a red marker on the top bar
-   showing where the eyes are being told to look.
+   It shows the camera view with a box on each person, labelled with their ID
+   and horizontal position (`x=0.42`). Coloured dots show which eye watches
+   them (red = screen-left eye, green = centre, blue = screen-right). The blue
+   frame is the region of interest, and the markers on the top bar show where
+   each eye is being told to look. The current mode and number of people are
+   in the top-left corner.
 2. If the picture is upside down or mirrored, set `rotate` / `hflip` under
    `[camera]`.
-3. Stand at the far left of the sidewalk stretch you care about and note the
-   red dot's x position (0 = left edge, 1 = right edge). Put that number in
-   `x_left`. Do the same at the far right for `x_right`.
+3. Stand at the far left of the sidewalk stretch you care about and read your
+   `x=` value off your box (0 = left edge of the picture, 1 = right edge). Put
+   that number in `x_left`. Do the same at the far right for `x_right`.
 4. Walk past. If the eyes turn the opposite way, set `flip_x = yes`. This is
    needed if the projector is mirrored for rear projection, or the camera faces
    the other way.
@@ -124,6 +173,7 @@ Move the eyes by hand, from the Pi or any machine on the network:
 echo "1 0"   | nc -u -w0 eyes.local 5005    # look screen-right
 echo "-1 0"  | nc -u -w0 eyes.local 5005    # look screen-left
 echo "0 -0.6" | nc -u -w0 eyes.local 5005   # look down
+echo "-1 0 0 0.8 1 0 p=1" | nc -u -w0 eyes.local 5005   # left eye left, centre up, right eye right, pupils wide
 ```
 
 Each message holds for 2 seconds, then the eyes wander again.
@@ -140,7 +190,12 @@ sudo systemctl start house-eyes-tracker
 ```
 
 Test videos from Intel's `sample-videos` repository are in `~/testvids` on the
-Pi. Add `--no-send` to track without moving the eyes, or `--detector motion`
+Pi. `face-demographics-walking-and-pause.mp4` has people coming and going
+(single and split modes), `classroom.mp4` has 4 people at once (split), and
+`crowd-tiled.mp4` is six clips tiled together to reach crowd mode. Its tiling
+makes some boxes span two tiles, so it's only good for exercising the modes.
+`~/vidtest.sh VIDEO SECONDS TAG` runs one and saves preview and eye
+screenshots to `/tmp`. Add `--no-send` to track without moving the eyes, or `--detector motion`
 to try the CPU fallback.
 
 ## Other cameras
@@ -172,5 +227,8 @@ sudo systemctl disable --now house-eyes-tracker   # turn tracking off entirely
 | `ncDeviceOpen ... global mutex initialization failed` | A stale `/tmp/mvnc.mutex` from a run as another user. The service uses a private `/tmp`, so this only affects manual runs; `sudo rm /tmp/mvnc.mutex` |
 | `Bus error` | Running on the 64-bit kernel. Check `uname -r` ends in `-v7l+` and `arm_64bit=0` is in `/boot/config.txt` |
 | Eyes look the wrong way | `flip_x = yes` |
-| Eyes jitter between people | Raise `switch_after` or `smooth`, narrow `roi` |
+| Eyes switch people too often | Raise `dwell_min` / `dwell_max`, lower `newcomer_bonus`, narrow `roi` |
+| Crowd mode kicks in too easily, or not at all | Adjust `crowd_enter` / `crowd_exit` |
+| Pupils stay wide | `close_height` is too low for your camera view; raise it, or set 0 to turn off |
+| Eyes look half-closed | Gaze y is far down, and the eyelids follow the pupils. Raise `y_at_top` / `y_at_bottom` (closer to 0) |
 | Eyes lag behind walkers | Raise `lead` a little (0.2 to 0.3) |
