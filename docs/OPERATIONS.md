@@ -64,8 +64,10 @@ At 640 px wide with a radius of 128 and the outer eyes 250 px from centre, the
 outer eyes run off the edges of the frame. That is how it has been running;
 adjust `eyePosition` to line the eyes up with the windows.
 
-Output resolution is the `hdmi_cvt` line in `/boot/config.txt`. Changing it
-needs a reboot, and the eye positions scale with the width.
+The Pi boots at 640x480 (`hdmi_mode=4` in `/boot/config.txt`), but X then
+picks the projector's preferred mode, currently 1920x1080. The eye program
+draws at whatever X is running, and the eye positions scale with the width.
+Check with `sudo DISPLAY=:0 xrandr`.
 
 ## Other eye programs
 
@@ -112,7 +114,8 @@ is copied into place on the next boot.
 | `ModuleNotFoundError` | A pip package is missing. Re-run `sudo ./install.sh`. |
 | `failed to open vchiq instance` | `dtoverlay=vc4-fkms-v3d` is missing from `/boot/config.txt` (pi3d checks `lsmod` for `vc4`). |
 | Desktop appears instead of eyes | `systemctl get-default` should say `multi-user.target`. |
-| No picture at all | Projector on the wrong HDMI port, or the Pi booted before the projector was on. Try `hdmi_force_hotplug=1` in `/boot/config.txt`. Check with `tvservice -s`. |
+| No picture at all | Cable must be in **HDMI0** (next to USB-C); the Pi only checks for a display at boot, so reboot after moving it. `tvservice -s` shows what the Pi is sending. |
+| Projector says "no signal" but `tvservice -s` shows a mode | The projector rejects that timing. `edid-decode` on the output of `sudo tvservice -d /tmp/edid.dat` lists what it accepts; pick one of those with `hdmi_group`/`hdmi_mode`. |
 | Picture goes dark after a while | `/etc/X11/xorg.conf` missing; re-run `install.sh`. |
 | Slow or stuttering | `vcgencmd measure_temp; vcgencmd get_throttled`. Anything other than `throttled=0x0` means heat or power-supply trouble. |
 | X server detail | `/var/log/Xorg.0.log` |

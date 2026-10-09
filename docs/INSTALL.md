@@ -86,8 +86,8 @@ HDMI screen, no GPIO-halt, no ADC) plus the changes made by hand afterwards.
    | `max_framebuffers=1` | single display |
    | `disable_overscan=1` | use the whole frame |
    | `gpu_mem=128` | memory for the GPU |
-   | `hdmi_group=2`, `hdmi_mode=87` | use the custom mode below |
-   | `hdmi_cvt=640 480 60 1 0 0 0` | 640x480 @ 60 Hz, 4:3 |
+   | `hdmi_group=2`, `hdmi_mode=4` | standard 640x480 @ 60 Hz boot mode (any `hdmi_cvt` line is commented out) |
+   | `hdmi_force_hotplug=1` | output HDMI even if the projector is off at boot |
 
 5. **`/etc/X11/xorg.conf`.** Disables screen blanking and DPMS.
 6. **`/etc/rc.local`.** Adds
@@ -105,8 +105,9 @@ reproduces what makes the eyes work and leaves out what doesn't. See
 - The original also has USB ethernet gadget mode enabled (`dtoverlay=dwc2`,
   `modules-load=dwc2,g_ether`). It has no effect on the display and is not
   applied.
-- The original has `#hdmi_force_hotplug=1` commented out, so `install.sh`
-  leaves it off too. If the Pi boots before the projector is switched on and
-  you get no picture, set `hdmi_force_hotplug=1` in `/boot/config.txt`.
+- The original used a custom 640x480 mode (`hdmi_mode=87` + `hdmi_cvt`) and
+  left `hdmi_force_hotplug` off. On 2026-10-08 that mode gave "no signal" on
+  the Hichip projector (scan rate too low), so both were changed on the Pi and
+  in `install.sh`. The pre-change file is `/boot/config.txt.bak-2026-10-08`.
 - Wifi, hostname, user, locale and time zone come from Raspberry Pi Imager,
   not from `install.sh`.

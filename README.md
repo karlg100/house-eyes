@@ -15,7 +15,7 @@ not from the real projector.*
 |---|---|
 | Computer | Raspberry Pi 4 Model B, hostname `eyes` (`eyes.local`), user `karlg` |
 | OS | Raspberry Pi OS 11 "bullseye", 32-bit, Desktop image (2023-05-03) |
-| Output | HDMI to the projector, forced to 640x480 @ 60 Hz |
+| Output | HDMI0 to the projector. Boots at 640x480 @ 60 Hz; X then switches to the projector's preferred mode (1920x1080 on the current Hichip projector) |
 | Eye software | [Adafruit Pi_Eyes](https://github.com/adafruit/Pi_Eyes) (MIT), rendered with [pi3d](https://pi3d.github.io/) |
 | Our change | `eyes/tri-eyes.py`: Adafruit's two-eye `eyes.py` with a third, centre eye added |
 | Autostart | One line in `/etc/rc.local` |

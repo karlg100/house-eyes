@@ -81,10 +81,14 @@ fi
 set_config max_framebuffers 1
 set_config disable_overscan 1
 set_config gpu_mem 128
-# Custom HDMI mode: 640x480 @ 60 Hz (group 2 / mode 87 = "use hdmi_cvt").
+# Boot HDMI mode: standard DMT 640x480 @ 60 Hz (group 2, mode 4).
+# The old custom mode (mode 87 + hdmi_cvt) came out at ~29.7 kHz, below what
+# the Hichip projector accepts (31-135 kHz) -> "no signal". Fixed 2026-10-08.
 set_config hdmi_group 2
-set_config hdmi_mode 87
-set_config hdmi_cvt "640 480 60 1 0 0 0"
+set_config hdmi_mode 4
+sed -i -E 's|^hdmi_cvt=|#hdmi_cvt=|' "$CONFIG"
+# Drive HDMI even if the projector is off or asleep when the Pi boots.
+set_config hdmi_force_hotplug 1
 
 echo "== X: never blank the screen"
 cat > /etc/X11/xorg.conf <<'XORG'
