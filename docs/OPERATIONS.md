@@ -49,7 +49,7 @@ All in `eyes/tri-eyes.py`:
 | What | Where | Current value |
 |---|---|---|
 | Eye size (radius in pixels) | `eyeRadius`, or `--radius N` on the command line | `128` |
-| Left/right eye distance from centre | `eyePosition` | `(DISPLAY.width / 4) + 90`, i.e. 250 px at 640 wide |
+| Left/right eye distance from centre | `EYE_SPACING` (fraction of screen width), or `--spacing 0.26` on the command line | `0.275`, about 528 px at 1920 wide (was width/4 + 90 = 570 px; moved in about 7.5% on 2026-10-11 to line up with the windows) |
 | Centre eye offset | `eyePositionC` | `0` |
 | Each eye wanders independently | `CRAZY_EYES` | `False` (all three move together) |
 | Automatic blinking | `AUTOBLINK` | `True` |
@@ -60,9 +60,9 @@ All in `eyes/tri-eyes.py`:
 `sudo xinit /usr/bin/python3 tri-eyes.py --radius 150 :0`. To make it
 permanent, put it in the `/etc/rc.local` line.
 
-At 640 px wide with a radius of 128 and the outer eyes 250 px from centre, the
-outer eyes run off the edges of the frame. That is how it has been running;
-adjust `eyePosition` to line the eyes up with the windows.
+To try a spacing without editing the file, stop the eyes and start them by
+hand with `--spacing`, e.g. `cd /boot/Pi_Eyes && sudo xinit /usr/bin/python3
+tri-eyes.py --spacing 0.26 :0`, then put the value you like into `EYE_SPACING`.
 
 The Pi boots at 640x480 (`hdmi_mode=4` in `/boot/config.txt`), but X then
 picks the projector's preferred mode, currently 1920x1080. The eye program

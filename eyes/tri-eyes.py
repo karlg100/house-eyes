@@ -189,16 +189,24 @@ DISPLAY.set_background(0, 0, 0, 1) # r,g,b,alpha
 # onscreen.  eyePosition, also pixels, is the offset (left or right) from
 # the center point of the screen to the center of each eye.  This geometry
 # is explained more in-depth in fbx2.c.
-eyePosition = (DISPLAY.width / 4) + 90
+# Distance from screen centre to the left/right eye, as a fraction of the
+# screen width. Was width/4 + 90 px (0.297 at 1920 wide); 0.275 brings the
+# outer eyes ~7.5% closer to line up with the windows (2026-10-11).
+# Try other values without editing:  tri-eyes.py --spacing 0.26 :0
+EYE_SPACING = 0.275
+eyePosition = DISPLAY.width * EYE_SPACING
 eyePositionC = 0
 #eyePositionC = (DISPLAY.width / 2)
 eyeRadius   = 128  # Default; use 240 for IPS screens
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--radius", type=int)
+parser.add_argument("--spacing", type=float, help="outer eye offset, fraction of screen width")
 args, _ = parser.parse_known_args()
 if args.radius:
 	eyeRadius = args.radius
+if args.spacing:
+	eyePosition = DISPLAY.width * args.spacing
 
 
 # A 2D camera is used, mostly to allow for pixel-accurate eye placement,
