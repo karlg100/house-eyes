@@ -49,7 +49,7 @@ All in `eyes/tri-eyes.py`:
 | What | Where | Current value |
 |---|---|---|
 | Eye size (radius in pixels) | `eyeRadius`, or `--radius N` on the command line | `128` |
-| Left/right eye distance from centre | `EYE_SPACING` (fraction of screen width), or `--spacing 0.26` on the command line | `0.275`, about 528 px at 1920 wide (was width/4 + 90 = 570 px; moved in about 7.5% on 2026-10-11 to line up with the windows) |
+| Left/right eye distance from centre | `EYE_SPACING` (fraction of screen width), or `--spacing 0.26` on the command line | `0.265`, about 509 px at 1920 wide (was width/4 + 90 = 570 px; moved in about 11% on 2026-10-11 to line up with the windows) |
 | Centre eye offset | `eyePositionC` | `0` |
 | Each eye wanders independently | `CRAZY_EYES` | `False` (all three move together) |
 | Automatic blinking | `AUTOBLINK` | `True` |

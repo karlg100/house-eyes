@@ -190,10 +190,10 @@ DISPLAY.set_background(0, 0, 0, 1) # r,g,b,alpha
 # the center point of the screen to the center of each eye.  This geometry
 # is explained more in-depth in fbx2.c.
 # Distance from screen centre to the left/right eye, as a fraction of the
-# screen width. Was width/4 + 90 px (0.297 at 1920 wide); 0.275 brings the
-# outer eyes ~7.5% closer to line up with the windows (2026-10-11).
+# screen width. Was width/4 + 90 px (0.297 at 1920 wide); 0.265 brings the
+# outer eyes ~11% closer to line up with the windows (2026-10-11).
 # Try other values without editing:  tri-eyes.py --spacing 0.26 :0
-EYE_SPACING = 0.275
+EYE_SPACING = 0.265
 eyePosition = DISPLAY.width * EYE_SPACING
 eyePositionC = 0
 #eyePositionC = (DISPLAY.width / 2)
