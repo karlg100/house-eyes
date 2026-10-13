@@ -53,12 +53,18 @@ All in `eyes/tri-eyes.py`:
 | Centre eye offset | `eyePositionC` | `0` |
 | Each eye wanders independently | `CRAZY_EYES` | `False` (all three move together) |
 | Automatic blinking | `AUTOBLINK` | `True` |
+| Rogue eyes: while wandering with nobody to watch, one eye (sometimes two) looks somewhere else, then drifts back into sync | `ROGUE`, `ROGUE_EVERY`, `ROGUE_TWO`, `ROGUE_LONG`, `ROGUE_GLANCE`, `ROGUE_LINGER`, `ROGUE_RETARGET` | On; an episode every 8 to 30 s; 30% of the time two eyes; 35% of the time it lingers 3 to 6 s, otherwise a 0.6 to 1.5 s glance |
 | Eye shape | `parse("graphics/cyclops-eye.svg")` | cyclops shape for all three |
 | Iris and sclera textures | `irisMap`, `scleraMap` | `dragon-iris.jpg`, `dragon-sclera.png` |
 
 `--radius` goes before the display number:
 `sudo xinit /usr/bin/python3 tri-eyes.py --radius 150 :0`. To make it
 permanent, put it in the `/etc/rc.local` line.
+
+Rogue eyes can be turned off with `--no-rogue`, or made frequent for testing
+with `--rogue-every 2 4` (seconds between episodes), on the same command line.
+They only happen while the eyes wander on their own; the moment the people
+tracker has someone to watch, all eyes go back under its control.
 
 To try a spacing without editing the file, stop the eyes and start them by
 hand with `--spacing`, e.g. `cd /boot/Pi_Eyes && sudo xinit /usr/bin/python3

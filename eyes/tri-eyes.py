@@ -132,6 +132,31 @@ if _gaze_args.gaze_port > 0:
 	except OSError as e:
 		print("Gaze input disabled:", e)
 lastFrameTime = time.time()
+
+# ROGUE EYES (house-eyes): while the eyes are wandering on their own (nobody
+# for the tracker to watch), every so often one eye -- sometimes two -- looks
+# somewhere else. Usually just a quick glance; sometimes they wander off on
+# their own for a few seconds before drifting back into sync.
+ROGUE           = True
+ROGUE_EVERY     = (8.0, 30.0)   # seconds between episodes (random in range)
+ROGUE_TWO       = 0.3           # chance that two eyes go rogue instead of one
+ROGUE_LONG      = 0.35          # chance of a long episode instead of a glance
+ROGUE_GLANCE    = (0.6, 1.5)    # seconds, short episode
+ROGUE_LINGER    = (3.0, 6.0)    # seconds, long episode
+ROGUE_RETARGET  = (0.7, 1.8)    # seconds between rogue eye moves in a long episode
+_rogue_parser = argparse.ArgumentParser(add_help=False)
+_rogue_parser.add_argument("--no-rogue", action="store_true")
+_rogue_parser.add_argument("--rogue-every", type=float, nargs=2, metavar=("MIN", "MAX"))
+_rogue_args, _ = _rogue_parser.parse_known_args()
+if _rogue_args.no_rogue:
+	ROGUE = False
+if _rogue_args.rogue_every:
+	ROGUE_EVERY = tuple(_rogue_args.rogue_every)
+rogueNext    = time.time() + random.uniform(*ROGUE_EVERY)
+rogueEyes    = {}     # eye index (0 screen-left, 1 centre, 2 screen-right) -> [tx, ty, next move]
+rogueEnd     = 0.0
+rogueRX, rogueRY = 0.0, 0.0   # drawn rotation of the screen-right eye (leftEye)
+rogueROn     = False          # True while the screen-right eye is not following curX/curY
 perEyeUntil   = 0.0    # draw the eyes independently until this time
 wasPerEye     = False
 pupilCur      = 0.5    # pupil size actually drawn (eases between sources)
@@ -505,6 +530,7 @@ def frame(p):
 	global trackingPosC
 	global trackingPosR
 	global lastFrameTime, perEyeUntil, wasPerEye, pupilCur, pupilBlendTil
+	global rogueNext, rogueEyes, rogueEnd, rogueRX, rogueRY, rogueROn
 
 	DISPLAY.loop_running()
 
@@ -582,12 +608,61 @@ def frame(p):
 			wasPerEye = False
 		if not CRAZY_EYES:
 			if now < perEyeUntil:
-				curXC += (curX - curXC) * k
-				curYC += (curY - curYC) * k
-				curXR += (curX - curXR) * k
-				curYR += (curY - curYR) * k
+				if 1 not in rogueEyes:
+					curXC += (curX - curXC) * k
+					curYC += (curY - curYC) * k
+				if 0 not in rogueEyes:
+					curXR += (curX - curXR) * k
+					curYR += (curY - curYR) * k
 			else:
 				curXC, curYC, curXR, curYR = curX, curY, curX, curY
+
+	# Rogue eyes: only while wandering on our own
+	idle = (gaze is None and not CRAZY_EYES and ROGUE and
+	        not (JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0))
+	if not idle:
+		if rogueEyes or rogueROn:
+			if rogueROn and gaze is not None:
+				curX, curY = rogueRX, rogueRY  # hand over without a jump
+			rogueEyes, rogueROn = {}, False
+		rogueNext = max(rogueNext, now + random.uniform(*ROGUE_EVERY))
+	else:
+		if not rogueEyes and now >= rogueNext and now >= perEyeUntil:
+			count = 2 if random.random() < ROGUE_TWO else 1
+			for i in random.sample((0, 1, 2), count):
+				rogueEyes[i] = [0.0, 0.0, 0.0]   # target set below
+			long = random.random() < ROGUE_LONG
+			rogueEnd = now + random.uniform(*(ROGUE_LINGER if long else ROGUE_GLANCE))
+		if rogueEyes:
+			for i, r in rogueEyes.items():
+				if now >= r[2]:
+					# Somewhere clearly different from where the others look
+					tx = random.uniform(-30.0, 30.0)
+					if abs(tx - curX) < 15.0:
+						tx = curX - 25.0 if curX > 0 else curX + 25.0
+					r[0], r[1] = tx, random.uniform(-15.0, 15.0)
+					r[2] = now + random.uniform(*ROGUE_RETARGET)
+			if 0 in rogueEyes:
+				curXR += (rogueEyes[0][0] - curXR) * k
+				curYR += (rogueEyes[0][1] - curYR) * k
+			if 1 in rogueEyes:
+				curXC += (rogueEyes[1][0] - curXC) * k
+				curYC += (rogueEyes[1][1] - curYC) * k
+			if 2 in rogueEyes:
+				if not rogueROn:
+					rogueRX, rogueRY, rogueROn = curX, curY, True
+				rogueRX += (rogueEyes[2][0] - rogueRX) * k
+				rogueRY += (rogueEyes[2][1] - rogueRY) * k
+			perEyeUntil = now + BLEND_TIME   # keep drawing per eye, blend back after
+			if now >= rogueEnd:
+				rogueEyes = {}
+				rogueNext = now + random.uniform(*ROGUE_EVERY)
+		if rogueROn and 2 not in rogueEyes:
+			# drift the screen-right eye back into sync
+			rogueRX += (curX - rogueRX) * k
+			rogueRY += (curY - rogueRY) * k
+			if now >= perEyeUntil or (abs(rogueRX - curX) < 0.2 and abs(rogueRY - curY) < 0.2):
+				rogueROn = False
 	perEyeDraw = CRAZY_EYES or now < perEyeUntil
 
 	# Pupil size: the tracker can override the automatic pupil motion
@@ -955,11 +1030,12 @@ def frame(p):
 	
 	# Left eye (on screen right)
 
-	leftIris.rotateToX(curY)
-	leftIris.rotateToY(curX + convergence)
+	dLX, dLY = (rogueRX, rogueRY) if rogueROn else (curX, curY)
+	leftIris.rotateToX(dLY)
+	leftIris.rotateToY(dLX + convergence)
 	leftIris.draw()
-	leftEye.rotateToX(curY)
-	leftEye.rotateToY(curX + convergence)
+	leftEye.rotateToX(dLY)
+	leftEye.rotateToY(dLX + convergence)
 	leftEye.draw()
 
 	leftUpperEyelid.draw()
