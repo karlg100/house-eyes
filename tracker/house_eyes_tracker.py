@@ -51,6 +51,11 @@ DEFAULTS = {
         # picamera2 only: libcamera tuning file, e.g. ov5647_noir.json for a
         # NoIR (no infrared filter) camera. Empty = the sensor's default.
         "tuning": "",
+        # picamera2 only, for low light: auto-exposure mode (normal, short,
+        # long) and the longest frame time it may use. "long" lets the camera
+        # expose up to 120 ms at gain 12; 125 ms frames = about 8 fps.
+        "exposure_mode": "normal",
+        "max_frame_ms": "66",
     },
     "detector": {
         # myriad = person-detection network on the Neural Compute Stick 2
@@ -171,12 +176,31 @@ class PiCameraSource(FrameSource):
         size = (int(self.cfg["width"]), int(self.cfg["height"]))
         cam.configure(cam.create_video_configuration(
             main={"size": size, "format": "RGB888"}, buffer_count=2))
+        from libcamera import controls
+        modes = {"normal": controls.AeExposureModeEnum.Normal,
+                 "short": controls.AeExposureModeEnum.Short,
+                 "long": controls.AeExposureModeEnum.Long}
+        max_us = int(float(self.cfg["max_frame_ms"]) * 1000)
+        cam.set_controls({"AeExposureMode": modes[self.cfg["exposure_mode"]],
+                          "FrameDurationLimits": (33333, max(33333, max_us))})
         cam.start()
-        log.info("camera: picamera2 %dx%d started", *size)
+        log.info("camera: picamera2 %dx%d started (%s exposure, frames up to %d ms)",
+                 size[0], size[1], self.cfg["exposure_mode"], max_us // 1000)
+        last_meta = 0.0
         try:
             while self.running:
                 # RGB888 in picamera2 is BGR byte order, which is what OpenCV wants
-                self.publish(cam.capture_array("main"))
+                req = cam.capture_request()
+                try:
+                    self.publish(req.make_array("main"))
+                    if time.time() - last_meta > 60:   # log exposure once a minute
+                        last_meta = time.time()
+                        m = req.get_metadata()
+                        log.info("camera: exposure %.0f ms, gain %.1f, lux %.1f",
+                                 m.get("ExposureTime", 0) / 1000, m.get("AnalogueGain", 0),
+                                 m.get("Lux", 0))
+                finally:
+                    req.release()
         finally:
             cam.stop()
             cam.close()

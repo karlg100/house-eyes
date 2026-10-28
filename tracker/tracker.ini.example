@@ -22,6 +22,11 @@ hflip = no
 crop = 0,0.25,1,0.9
 # NoIR camera (no infrared filter, pinkish in daylight): use its tuning file
 tuning = ov5647_noir.json
+# Low light: "long" lets auto-exposure use up to 120 ms at gain 12, and
+# max_frame_ms = 125 allows frames that long (about 8 fps). Plenty for the
+# eyes. Outside these limits more light is needed (see docs/TRACKING.md).
+exposure_mode = long
+max_frame_ms = 125
 
 [detector]
 # myriad: person detector on the Neural Compute Stick 2
