@@ -8,11 +8,20 @@
 # rtsp://user:pw@ip/... network camera
 # file:/path/video.mp4  recorded video, looped (for testing)
 source = picamera2
-width = 1280
-height = 720
+# The house camera is an OV5647 (Pi Camera v1 type) with a fisheye lens.
+# 1296x972 is its full-width binned mode; 1920x1080 crops the middle of the
+# sensor and throws away the sides of the fisheye view.
+width = 1296
+height = 972
 # 0, 90, 180 or 270, and/or mirror, if the camera is mounted that way
 rotate = 0
 hflip = no
+# Keep only this band of the picture (fractions x0,y0,x1,y1): drops the sky
+# and treetops above and most of the roof below, so people are bigger for
+# the detector. Preview and calibration x values refer to the cropped picture.
+crop = 0,0.25,1,0.9
+# NoIR camera (no infrared filter, pinkish in daylight): use its tuning file
+tuning = ov5647_noir.json
 
 [detector]
 # myriad: person detector on the Neural Compute Stick 2
@@ -22,7 +31,7 @@ model = /opt/house-eyes/models/person-detection-retail-0013.xml
 # 0-1; raise if it sees people that aren't there, lower if it misses people
 confidence = 0.55
 # ignore detections shorter than this fraction of the picture height
-min_height = 0.08
+min_height = 0.06
 requests = 2
 
 [tracking]
@@ -65,8 +74,10 @@ close_pupil = 0.85
 # each end of the sidewalk and read x off the preview page.
 x_left = 0.0
 x_right = 1.0
-# yes if the eyes look the opposite way to the person
-flip_x = no
+# yes if the eyes look the opposite way to the person. The camera looks out
+# from the house, so its left is the street's right: yes is the expected
+# setting with the camera at the window.
+flip_x = yes
 # Gaze height (-1 down .. 1 up) when the person's feet are at the top /
 # bottom of the picture.
 y_at_top = -0.1

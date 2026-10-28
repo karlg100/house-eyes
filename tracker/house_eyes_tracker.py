@@ -44,6 +44,13 @@ DEFAULTS = {
         "height": "720",
         "rotate": "0",          # 0, 90, 180, 270
         "hflip": "no",
+        # Keep only this part of the picture (fractions x0,y0,x1,y1), e.g. the
+        # band where people walk. Everything downstream, including the preview
+        # and calibration x values, works on the cropped picture.
+        "crop": "0,0,1,1",
+        # picamera2 only: libcamera tuning file, e.g. ov5647_noir.json for a
+        # NoIR (no infrared filter) camera. Empty = the sensor's default.
+        "tuning": "",
     },
     "detector": {
         # myriad = person-detection network on the Neural Compute Stick 2
@@ -115,6 +122,7 @@ class FrameSource(threading.Thread):
         self.stamp = 0.0
         self.seq = 0
         self.running = True
+        self.crop = tuple(float(v) for v in cfg["crop"].split(","))
 
     def publish(self, frame):
         rot = int(self.cfg["rotate"])
@@ -126,6 +134,10 @@ class FrameSource(threading.Thread):
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         if cfg_bool(self.cfg["hflip"]):
             frame = cv2.flip(frame, 1)
+        if self.crop != (0.0, 0.0, 1.0, 1.0):
+            h, w = frame.shape[:2]
+            x0, y0, x1, y1 = self.crop
+            frame = frame[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
         with self.lock:
             self.frame = frame
             self.stamp = time.time()
@@ -154,7 +166,8 @@ class PiCameraSource(FrameSource):
         from picamera2 import Picamera2
         if not Picamera2.global_camera_info():
             raise RuntimeError("no CSI camera detected")
-        cam = Picamera2()
+        tuning = self.cfg["tuning"].strip()
+        cam = Picamera2(tuning=Picamera2.load_tuning_file(tuning) if tuning else None)
         size = (int(self.cfg["width"]), int(self.cfg["height"]))
         cam.configure(cam.create_video_configuration(
             main={"size": size, "format": "RGB888"}, buffer_count=2))
