@@ -8,9 +8,11 @@
 # rtsp://user:pw@ip/... network camera
 # file:/path/video.mp4  recorded video, looped (for testing)
 source = picamera2
-# The house camera is an OV5647 (Pi Camera v1 type) with a fisheye lens.
-# 1296x972 is its full-width binned mode; 1920x1080 crops the middle of the
-# sensor and throws away the sides of the fisheye view.
+# The house camera is an OV5647 (Pi Camera v1 type), NoIR. 1296x972 is its
+# full-width binned mode; 1920x1080 crops the middle of the sensor.
+# 2026-10-30: the clip-on fisheye was removed (people were too small to detect
+# and the IR flood barely registered through it); the camera now uses its own
+# lens, tilted down so the road crosses the middle and the yard fills the bottom.
 width = 1296
 height = 972
 # 0, 90, 180 or 270, and/or mirror, if the camera is mounted that way
@@ -19,8 +21,9 @@ hflip = no
 # Keep only this band of the picture (fractions x0,y0,x1,y1): drops the sky
 # and treetops above and most of the roof below, so people are bigger for
 # the detector. Preview and calibration x values refer to the cropped picture.
-crop = 0,0.25,1,0.9
-# NoIR camera (no infrared filter, pinkish in daylight): use its tuning file
+crop = 0,0.3,1,1
+# NoIR camera (no infrared filter, pinkish in daylight): use its tuning file.
+# At night it needs the 850 nm IR flood; even then the yard is dim.
 tuning = ov5647_noir.json
 # Low light: "long" lets auto-exposure use up to 120 ms at gain 12, and
 # max_frame_ms = 125 allows frames that long (about 8 fps). Plenty for the
@@ -42,7 +45,7 @@ requests = 2
 [tracking]
 # seconds a person can go unseen (e.g. hidden behind someone) before
 # they're forgotten
-lost_after = 1.0
+lost_after = 2.0
 # detections needed before a new person counts (filters one-off false alarms)
 confirm_hits = 2
 # 0-1: how much each new detection moves a person's box (lower = calmer)

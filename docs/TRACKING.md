@@ -30,6 +30,21 @@ camera, the eyes carry on exactly as before.
 Tested end to end with a recorded video in place of the camera: people were
 detected on the stick, and the projected eyes turned to follow them.
 
+### Night test, 2026-10-30
+
+- Camera: OV5647 NoIR, clip-on fisheye removed, tilted down to the yard.
+  Settings on the Pi: `crop = 0,0.3,1,1`, `x_left = 0`, `x_right = 1`,
+  `flip_x = yes`, `lost_after = 2.0`.
+- IR: Univivi 20-LED 850 nm flood. The yard is visible at night but dim
+  (about 3/255 at 120 ms and gain 12 before brightening).
+- Result: detections at night are intermittent. A person in the yard was
+  picked up for 1 to 3 seconds at a time; the sidewalk is too dark. Enabled
+  as-is for Halloween: when someone is detected the eyes look their way, and
+  otherwise they wander as usual.
+- In daylight with the fisheye, the detector found a walker on the road in
+  only 17% of frames (31% with the picture split in halves); motion picked
+  them up reliably. A motion-plus-detector mode is the next improvement.
+
 ## Installing
 
 On a Pi already set up with `./install.sh`:
