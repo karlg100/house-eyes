@@ -103,3 +103,13 @@ rate = 15
 # browser view for calibration: http://eyes.local:8080/  (0 = off)
 port = 8080
 fps = 5
+
+[show]
+# Link to the front-lawn show controller (the "haunt" director) over MQTT.
+# It switches tracking on and off (console / phone page), and shows whether
+# the eyes are up and how many people they see. Leave host empty for none.
+# Password: HAUNT_MQTT_PASSWORD=... in /etc/house-eyes/env (root-only), or password_file.
+host = 192.168.1.244
+port = 1883
+username = home-pi
+prefix = haunt

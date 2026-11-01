@@ -45,7 +45,7 @@ fetch() {  # url dest sha256
 
 echo "== Packages"
 apt-get update
-apt-get install -y python3-opencv python3-numpy python3-picamera2 curl
+apt-get install -y python3-opencv python3-numpy python3-picamera2 python3-paho-mqtt curl
 
 echo "== OpenVINO $OV_VER runtime"
 if [ ! -f "/opt/intel/$OV_NAME/setupvars.sh" ]; then

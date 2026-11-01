@@ -4,6 +4,8 @@ After=network.target
 
 [Service]
 User=house-eyes
+# HAUNT_MQTT_PASSWORD=... for the [show] link to the front-lawn controller (optional)
+EnvironmentFile=-/etc/house-eyes/env
 Group=house-eyes
 SupplementaryGroups=video users
 ExecStart=/bin/bash -c 'source /opt/intel/openvino_2022/setupvars.sh >/dev/null && exec /usr/bin/python3 /opt/house-eyes/tracker/house_eyes_tracker.py --config /etc/house-eyes/tracker.ini'

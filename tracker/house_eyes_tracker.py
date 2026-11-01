@@ -30,6 +30,7 @@ import cv2
 import numpy as np
 
 from people import Attention, Calibration, PeopleTracker, gaze_message
+from showlink import SHOW_DEFAULTS, ShowLink
 
 log = logging.getLogger("tracker")
 
@@ -107,6 +108,10 @@ DEFAULTS = {
         "port": "8080",         # 0 disables the browser preview
         "fps": "5",
     },
+    # Link to the front-lawn show controller (MQTT): it can switch tracking on
+    # and off, and sees whether the eyes are up and how many people are in view.
+    # Empty host = no link. See showlink.py.
+    "show": dict(SHOW_DEFAULTS),
 }
 
 
@@ -388,7 +393,7 @@ class Preview:
 
     EYE_COLOURS = ((60, 60, 255), (60, 255, 60), (255, 120, 60))   # L, C, R (BGR)
 
-    def show(self, frame, people, mode, eyes, pupil, roi, t):
+    def show(self, frame, people, mode, eyes, pupil, roi, t, tracking=True):
         self.next = t + self.interval
         img = cv2.resize(frame, (640, int(640 * frame.shape[0] / frame.shape[1])))
         h, w = img.shape[:2]
@@ -410,8 +415,9 @@ class Preview:
         for i, (_, g) in enumerate(eyes or []):
             gx = int((g[0] + 1) / 2 * w)
             cv2.rectangle(img, (gx - 3, 2 + 4 * i), (gx + 3, 6 + 4 * i), self.EYE_COLOURS[i], -1)
-        cv2.putText(img, "%s  people=%d%s" % (mode, len(people),
-                                               "  pupil=%.2f" % pupil if pupil is not None else ""),
+        cv2.putText(img, "%s  people=%d%s%s" % (mode, len(people),
+                                                 "  pupil=%.2f" % pupil if pupil is not None else "",
+                                                 "" if tracking else "  TRACKING OFF (eyes wander)"),
                     (6, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok:
@@ -473,6 +479,8 @@ def main():
                               y_at_bottom=float(cal["y_at_bottom"]))
     pport = int(cfg["preview"]["port"])
     preview = Preview(pport, float(cfg["preview"]["fps"])) if pport else None
+    link = ShowLink(cfg["show"])
+    fps_t, fps_frames, fps_dets, cam_fps, det_fps = time.time(), 0, 0, 0.0, 0.0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     dest = (cfg["output"]["host"], int(cfg["output"]["port"]))
     send_every = 1.0 / float(cfg["output"]["rate"])
@@ -486,8 +494,10 @@ def main():
         now = time.time()
         if frame is not None:
             frames += 1
+            fps_frames += 1
             for t, boxes in detector.submit(frame, stamp):
                 dets += 1
+                fps_dets += 1
                 tracker.update(boxes, t)
         people = tracker.confirmed()
         peak = max(peak, len(people))
@@ -497,12 +507,18 @@ def main():
         if mode != last_mode:
             log.info("mode: %s -> %s (%d people)", last_mode, mode, len(people))
             last_mode = mode
-        if eyes and now >= next_send:
+        # Tracking switched off by the show controller: stop steering; tri-eyes.py
+        # goes back to wandering on its own after 2 s of silence.
+        if eyes and now >= next_send and link.tracking:
             next_send = now + send_every
             if not args.no_send:
                 sock.sendto(gaze_message(eyes, pupil).encode(), dest)
+        if now - fps_t >= 2.0:
+            cam_fps, det_fps = fps_frames / (now - fps_t), fps_dets / (now - fps_t)
+            fps_t, fps_frames, fps_dets = now, 0, 0
+        link.status(len(people), mode, cam_fps, det_fps)
         if preview and frame is not None and preview.wanted(now):
-            preview.show(frame, people, mode, eyes, pupil, roi, now)
+            preview.show(frame, people, mode, eyes, pupil, roi, now, link.tracking)
         if now - last_stats >= args.stats:
             el = now - last_stats
             log.info("stats: camera %.1f fps, detector %.1f fps, people now %d (peak %d), %s",
