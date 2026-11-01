@@ -224,6 +224,48 @@ Set `source` under `[camera]`:
 | Network camera | `rtsp://user:password@192.168.1.x/...` (expect a second or more of lag) |
 | Recorded video, looped | `file:/path/to/video.mp4` |
 
+## Link to the show controller (added 2026-11-01)
+
+The front-lawn show controller (the "haunt" director on home-pi, repo
+rpiGridMultiTask) can now switch tracking on and off, and shows whether the
+eyes are online and how many people they see (console `e`, phone page
+"House eyes" card). The controller side is deployed and live.
+
+How it works (tracker/showlink.py, optional `[show]` section in tracker.ini):
+
+- MQTT, broker 192.168.1.244, user `home-pi`, prefix `haunt`.
+- In: `haunt/eyes/tracking/set`, retained, `1` / `0`. With `0` the tracker
+  keeps detecting but sends no gaze messages, so tri-eyes.py wanders on its
+  own (its 2 s fallback). The retained value applies as soon as the tracker
+  connects.
+- Out: `haunt/eyes/online` (retained, `1`, last will `0`) and
+  `haunt/eyes/status` (retained JSON every 2 s and on change: tracking,
+  people, mode, camera_fps, detector_fps, host, ts).
+- No `[show]` host, or no paho-mqtt installed = runs exactly as before
+  (tracking always on).
+- Tests: `python3 -m pytest tracker/test_showlink.py` (no broker needed).
+
+### Installing it on eyes.local (NOT DONE YET)
+
+The controller session could not log in to eyes.local (its key,
+`claude-cowork-haunt`, is not authorized there), so this is still to do:
+
+```sh
+sudo apt install python3-paho-mqtt
+sudo install -m 644 tracker/showlink.py tracker/house_eyes_tracker.py tracker/people.py /opt/house-eyes/tracker/
+sudo install -m 644 tracker/house-eyes-tracker.service /etc/systemd/system/    # now reads EnvironmentFile=-/etc/house-eyes/env
+# add the [show] section from tracker/tracker.ini.example to /etc/house-eyes/tracker.ini
+# (host 192.168.1.244, port 1883, username home-pi, prefix haunt)
+sudo sh -c 'umask 077; echo "HAUNT_MQTT_PASSWORD=<same as /etc/haunt/env on home-pi>" > /etc/house-eyes/env'
+sudo systemctl daemon-reload && sudo systemctl restart house-eyes-tracker
+journalctl -u house-eyes-tracker -n 20     # expect "show link: connected"
+```
+
+Then check from the controller: the console shows an "Eyes" line (TRACKING,
+people in view), and pressing `e` there logs "tracking OFF (from the show
+controller)" here. Compare /opt/house-eyes/tracker with the repo first in case
+the Pi has local changes.
+
 ## Operations
 
 ```sh
