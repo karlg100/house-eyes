@@ -17,10 +17,15 @@ from xml.dom.minidom import parse
 from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
 from seasonal import theme_options, lid_weights, NoseGlow, ChristmasDecor
+from stained_glass import GlassDecor
 
 season = theme_options()
 CHRISTMAS = season.theme == "christmas"
+STAINED_GLASS = season.theme == "stained-glass"
+CENTER_DECOR = CHRISTMAS or STAINED_GLASS
 noseGlow = NoseGlow(season.nose_mode, tuple(season.nose_every)) if CHRISTMAS else None
+treeGlow = (NoseGlow(season.tree_mode, tuple(season.tree_every), command_word="tree")
+            if STAINED_GLASS else None)
 
 # INPUT CONFIG for eye motion ----------------------------------------------
 # ANALOG INPUTS REQUIRE SNAKE EYES BONNET
@@ -102,6 +107,10 @@ class GazeInput(threading.Thread):
 				if words and words[0].lower() == "nose":
 					if noseGlow is not None:
 						noseGlow.command(message)
+					continue
+				if words and words[0].lower() == "tree":
+					if treeGlow is not None:
+						treeGlow.command(message)
 					continue
 				pupil = None
 				nums = []
@@ -186,8 +195,9 @@ def gazeToEye(pt):
 # Load SVG file, extract paths & convert to point lists --------------------
 
 #dom               = parse("graphics/eye.svg")
-dom               = parse("graphics/christmas/reindeer-eye.svg" if CHRISTMAS
-                          else "graphics/cyclops-eye.svg")
+dom               = parse("graphics/stained-glass/eye.svg" if STAINED_GLASS else
+                          "graphics/christmas/reindeer-eye.svg" if CHRISTMAS else
+                          "graphics/cyclops-eye.svg")
 vb                = get_view_box(dom)
 pupilMinPts       = get_points(dom, "pupilMin"      , 32, True , True )
 pupilMaxPts       = get_points(dom, "pupilMax"      , 32, True , True )
@@ -252,6 +262,8 @@ if args.spacing:
 # coords for 2D positions.
 cam    = pi3d.Camera(is_3d=False, at=(0,0,0), eye=(0,0,-1000))
 shader = pi3d.Shader("uv_light")
+if STAINED_GLASS:
+	shader = pi3d.Shader("uv_flat")  # glass is backlit, not a skin-lit sphere
 light  = pi3d.Light(lightpos=(0, -500, -500), lightamb=(0.2, 0.2, 0.2))
 
 
@@ -275,6 +287,13 @@ if CHRISTMAS:
 	lidMap = pi3d.Texture("graphics/christmas/lid.png", mipmap=False,
 	                     filter=pi3d.constants.GL_LINEAR, blend=True)
 decor = ChristmasDecor(pi3d, eyeRadius, eyePosition, season, noseGlow) if CHRISTMAS else None
+glassDecor = GlassDecor(pi3d, eyeRadius, eyePosition, season, treeGlow) if STAINED_GLASS else None
+if STAINED_GLASS:
+	irisMap = pi3d.Texture("graphics/stained-glass/iris.png", mipmap=False,
+	                      filter=pi3d.constants.GL_LINEAR)
+	scleraMap = pi3d.Texture("graphics/stained-glass/sclera.png", mipmap=False,
+	                        filter=pi3d.constants.GL_LINEAR)
+	# Original black masking texture closes the eyelids without exposing skin.
 
 
 # Initialize static geometry -----------------------------------------------
@@ -649,7 +668,7 @@ def frame(p):
 	else:
 		if not rogueEyes and now >= rogueNext and now >= perEyeUntil:
 			count = 2 if random.random() < ROGUE_TWO else 1
-			for i in random.sample((0, 2) if CHRISTMAS else (0, 1, 2), count):
+			for i in random.sample((0, 2) if CENTER_DECOR else (0, 1, 2), count):
 				rogueEyes[i] = [0.0, 0.0, 0.0]   # target set below
 			long = random.random() < ROGUE_LONG
 			rogueEnd = now + random.uniform(*(ROGUE_LINGER if long else ROGUE_GLANCE))
@@ -883,7 +902,7 @@ def frame(p):
 		if blinkStateLeft == 2: n = 1.0 - n
 	else:
 		n = 0.0
-	newLeftUpperLidWeight, newLeftLowerLidWeight = lid_weights(trackingPos, n, CHRISTMAS)
+	newLeftUpperLidWeight, newLeftLowerLidWeight = lid_weights(trackingPos, n, CENTER_DECOR)
 
 	if blinkStateCenter:
 		n = (now - blinkStartTimeCenter) / blinkDurationCenter
@@ -892,7 +911,7 @@ def frame(p):
 	else:
 		n = 0.0
 	tpC = trackingPosC if perEyeDraw else trackingPos
-	newCenterUpperLidWeight, newCenterLowerLidWeight = lid_weights(tpC, n, CHRISTMAS)
+	newCenterUpperLidWeight, newCenterLowerLidWeight = lid_weights(tpC, n, CENTER_DECOR)
 
 
 	if blinkStateRight:
@@ -902,7 +921,7 @@ def frame(p):
 	else:
 		n = 0.0
 	tpR = trackingPosR if perEyeDraw else trackingPos
-	newRightUpperLidWeight, newRightLowerLidWeight = lid_weights(tpR, n, CHRISTMAS)
+	newRightUpperLidWeight, newRightLowerLidWeight = lid_weights(tpR, n, CENTER_DECOR)
 
 	if (luRegen or (abs(newLeftUpperLidWeight - prevLeftUpperLidWeight) >=
 	  upperLidRegenThreshold)):
@@ -1014,65 +1033,80 @@ def frame(p):
 
 	convergence = 2.0
 
-	# Right eye (on screen left)
-	if perEyeDraw:
-		rightIris.rotateToX(curYR)
-		rightIris.rotateToY(curXR - convergence)
-		rightIris.draw()
-		rightEye.rotateToX(curYR)
-		rightEye.rotateToY(curXR - convergence)
-	else:
-		rightIris.rotateToX(curY)
-		rightIris.rotateToY(curX - convergence)
-		rightIris.draw()
-		rightEye.rotateToX(curY)
-		rightEye.rotateToY(curX - convergence)
-	rightEye.draw()
-
-	# Center eye (center screen)
-	if not CHRISTMAS:
+	dLX, dLY = (rogueRX, rogueRY) if rogueROn else (curX, curY)
+	if not STAINED_GLASS:
+		# Right eye (on screen left)
 		if perEyeDraw:
-			centerIris.rotateToX(curYC)
-			centerIris.rotateToY(curXC - convergence)
-			centerIris.draw()
-			centerEye.rotateToX(curYC)
-			centerEye.rotateToY(curXC - convergence)
+			rightIris.rotateToX(curYR)
+			rightIris.rotateToY(curXR - convergence)
+			rightIris.draw()
+			rightEye.rotateToX(curYR)
+			rightEye.rotateToY(curXR - convergence)
 		else:
-			centerIris.rotateToX(curY)
-			centerIris.rotateToY(curX - convergence)
-			centerIris.draw()
-			centerEye.rotateToX(curY)
-			centerEye.rotateToY(curX - convergence)
-		centerEye.draw()
+			rightIris.rotateToX(curY)
+			rightIris.rotateToY(curX - convergence)
+			rightIris.draw()
+			rightEye.rotateToX(curY)
+			rightEye.rotateToY(curX - convergence)
+		rightEye.draw()
+
+		# Center eye (center screen)
+		if not CENTER_DECOR:
+			if perEyeDraw:
+				centerIris.rotateToX(curYC)
+				centerIris.rotateToY(curXC - convergence)
+				centerIris.draw()
+				centerEye.rotateToX(curYC)
+				centerEye.rotateToY(curXC - convergence)
+			else:
+				centerIris.rotateToX(curY)
+				centerIris.rotateToY(curX - convergence)
+				centerIris.draw()
+				centerEye.rotateToX(curY)
+				centerEye.rotateToY(curX - convergence)
+			centerEye.draw()
 
 	
-	# Left eye (on screen right)
+		# Left eye (on screen right)
 
-	dLX, dLY = (rogueRX, rogueRY) if rogueROn else (curX, curY)
-	leftIris.rotateToX(dLY)
-	leftIris.rotateToY(dLX + convergence)
-	leftIris.draw()
-	leftEye.rotateToX(dLY)
-	leftEye.rotateToY(dLX + convergence)
-	leftEye.draw()
-	if decor:
-		decor.draw_shines((curYR, curXR - convergence) if perEyeDraw
-		                  else (curY, curX - convergence), (dLY, dLX + convergence))
+		dLX, dLY = (rogueRX, rogueRY) if rogueROn else (curX, curY)
+		leftIris.rotateToX(dLY)
+		leftIris.rotateToY(dLX + convergence)
+		leftIris.draw()
+		leftEye.rotateToX(dLY)
+		leftEye.rotateToY(dLX + convergence)
+		leftEye.draw()
+		if decor:
+			decor.draw_shines((curYR, curXR - convergence) if perEyeDraw
+			                  else (curY, curX - convergence), (dLY, dLX + convergence))
 
-	leftUpperEyelid.draw()
-	leftLowerEyelid.draw()
-	if not CHRISTMAS:
-		centerUpperEyelid.draw()
-		centerLowerEyelid.draw()
-	rightUpperEyelid.draw()
-	rightLowerEyelid.draw()
-	if decor:
-		decor.draw_accents()
-		decor.draw_nose()
+		leftUpperEyelid.draw()
+		leftLowerEyelid.draw()
+		if not CENTER_DECOR:
+			centerUpperEyelid.draw()
+			centerLowerEyelid.draw()
+		rightUpperEyelid.draw()
+		rightLowerEyelid.draw()
+		if decor:
+			decor.draw_accents()
+			decor.draw_nose()
+	if glassDecor:
+		def glassBlink(state, started, duration):
+			if not state: return 0.0
+			t = min(1.0, max(0.0, (now-started)/duration))
+			return 1.0-t if state == 2 else t
+		glassDecor.draw_windows(
+		    (curYR, curXR-convergence) if perEyeDraw else (curY, curX-convergence),
+		    (dLY, dLX+convergence), p,
+		    glassBlink(blinkStateRight, blinkStartTimeRight, blinkDurationRight),
+		    glassBlink(blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft))
+		glassDecor.draw()
 
 	k = mykeys.read()
 	if noseGlow and k in (ord('n'), ord('N')):
 		noseGlow.command("nose pulse")
+	if treeGlow and k in (ord('t'), ord('T')):
+		treeGlow.command("tree pulse 6")
 	if k==27:
 		mykeys.close()
 		DISPLAY.stop()

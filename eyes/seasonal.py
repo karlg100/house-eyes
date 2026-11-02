@@ -1,4 +1,4 @@
-"""Christmas configuration and nose animation; no GPU or GPIO required."""
+"""Seasonal configuration, glow timing and reindeer decor."""
 
 import argparse
 import math
@@ -23,16 +23,26 @@ def finite(value):
 
 def theme_options(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--theme", choices=("halloween", "christmas"), default="halloween")
+    parser.add_argument("--theme", choices=("halloween", "christmas", "stained-glass"), default="halloween")
     parser.add_argument("--nose-mode", choices=("auto", "on", "off"), default="auto")
     parser.add_argument("--nose-every", type=positive, nargs=2, default=(12.0, 35.0),
                         metavar=("MIN", "MAX"))
     parser.add_argument("--nose-scale", type=positive, default=0.78)
     parser.add_argument("--nose-y", type=finite, default=0.0)
     parser.add_argument("--no-antlers", action="store_true")
+    parser.add_argument("--tree-mode", choices=("auto", "on", "off"), default="auto")
+    parser.add_argument("--tree-every", type=positive, nargs=2, default=(8.0, 18.0))
+    parser.add_argument("--tree-scale", type=positive, default=1.0)
+    parser.add_argument("--tree-y", type=finite, default=0.0)
+    parser.add_argument("--window-width", type=positive, default=2.3,
+                        help="stained-glass window width in eye radii")
+    parser.add_argument("--window-height", type=positive, default=4.0,
+                        help="stained-glass window height in eye radii")
     args, _ = parser.parse_known_args(argv)
     if args.nose_every[0] > args.nose_every[1]:
         parser.error("--nose-every MIN must be <= MAX")
+    if args.tree_every[0] > args.tree_every[1]:
+        parser.error("--tree-every MIN must be <= MAX")
     return args
 
 
@@ -52,12 +62,14 @@ class NoseGlow:
     A pulse temporarily overrides any mode, then returns to that mode.
     """
 
-    def __init__(self, mode="auto", every=(12.0, 35.0), clock=time.monotonic, rng=None):
+    def __init__(self, mode="auto", every=(12.0, 35.0), clock=time.monotonic, rng=None,
+                 command_word="nose"):
         if mode not in ("auto", "on", "off"):
             raise ValueError("invalid nose mode")
         if len(every) != 2 or not all(math.isfinite(n) and n > 0 for n in every) or every[0] > every[1]:
             raise ValueError("invalid random interval")
         self.mode = mode
+        self.command_word = command_word
         self.every = every
         self.clock = clock
         self.rng = rng or random.Random()
@@ -73,7 +85,7 @@ class NoseGlow:
         gaze timestamps, so a show cue cannot hold a stale tracking target.
         """
         words = message.lower().split()
-        if len(words) < 2 or words[0] != "nose":
+        if len(words) < 2 or words[0] != self.command_word:
             return False
         action = words[1]
         duration = 4.0

@@ -35,9 +35,11 @@ class Shape:
         self.rx = self.ry = 0
         self.alpha = 1
         self.buf = []
+        self.custom_data = np.zeros(60)
 
     def set_textures(self, textures):
         self.texture = textures[0]
+        self.textures = textures
 
     def set_shader(self, shader):
         self.shader = shader
@@ -48,6 +50,9 @@ class Shape:
 
     def set_alpha(self, alpha):
         self.alpha = alpha
+
+    def set_custom_data(self, index_from, data):
+        self.custom_data[index_from:index_from+len(data)] = data
 
     def positionX(self, x):
         self.xyz[0] = x
@@ -120,7 +125,7 @@ def load_scene(theme="christmas", width=1600, height=800, radius=160, extra=()):
     pi3d.Display = types.SimpleNamespace(create=lambda **k: display)
     pi3d.Camera = pi3d.Light = lambda **k: None
     pi3d.Keyboard = lambda: types.SimpleNamespace(read=lambda: -1)
-    pi3d.constants = types.SimpleNamespace(GL_LINEAR=9729)
+    pi3d.constants = types.SimpleNamespace(GL_LINEAR=9729, GL_NEAREST=9728)
     pi3d.Utility = types.SimpleNamespace(from_polar=lambda angle:
         (math.cos(math.radians(angle)), math.sin(math.radians(angle))))
     gpio = types.ModuleType("RPi.GPIO")
@@ -159,6 +164,67 @@ def draw_scene(scene, pupil=0.55):
     Shape.drawn = []
     scene["frame"](pupil)
     return list(Shape.drawn)
+
+
+def tree_gain(pane, parameters):
+    """CPU equivalent of stained_glass.fs, for offline previews only."""
+    elapsed, level, progress, animated, steady, _ = parameters
+    shimmer = 0.045 * np.sin(elapsed * 0.5 + pane[...,0] * 6.2831853)
+    d = (pane[...,1] - (1.12 - 1.24 * progress)) / 0.16
+    sweep = np.exp(-d*d) * level
+    star_progress = np.clip((progress-0.5)/0.35,0,1)
+    star_progress = star_progress**2*(3-2*star_progress)
+    star = (pane[...,1] < 0.21) * level * star_progress
+    light = 0.73 + shimmer + 0.22*sweep + 0.22*star
+    gain = (0.36 + 0.64*steady)*(1-animated) + light*animated
+    return np.where(pane[...,2] >= 0.5, np.clip(gain,0,1), 0.73)
+
+
+def glass_window_colour(uv, body, iris, params):
+    """CPU equivalent of glass_window.fs for previewing complete windows."""
+    gx,gy,pupil,blink,width,height,enabled,offset,_ = params
+    def smooth(a,b,x):
+        t=np.clip((x-a)/(b-a),0,1)
+        return t*t*(3-2*t)
+    def sample(texture,coords):
+        coords=coords%1
+        ix=(coords[...,0]*(texture.ix-1)).astype(int)
+        iy=(coords[...,1]*(texture.iy-1)).astype(int)
+        return texture.image[iy,ix,:3]/255
+    p=(uv-0.5)*np.array([width,height])
+    border=2*uv-1
+    anchor=(1-border[...,0]**4)*(1-border[...,1]**4)
+    flow=anchor*(.30+.70*np.exp(-.30*np.sum(p*p,axis=-1)))
+    rest=p-np.array([gx,gy])*flow[...,None]
+    blink=np.clip(blink,0,1)
+    rest[...,1]+=.38*blink*p[...,1]/np.sqrt(.04+p[...,1]**2)*np.exp(-.60*np.abs(p[...,1]))*anchor
+    rest+=.08*(pupil-.5)*p/np.sqrt(.10+np.sum(p*p,axis=-1))[...,None]*flow[...,None]
+    p=rest
+    r=np.linalg.norm(p,axis=-1)
+    angle=np.arctan2(p[...,1],p[...,0])/(2*np.pi)+.5
+    material=np.stack([angle+offset,np.log(1+r*1.8)*.60],axis=-1)
+    glass=sample(body,material)
+    x=np.abs(p[...,0])
+    h=0.53*np.maximum(0,1-x*x)**0.65*(1-np.clip(blink,0,1))
+    edge=np.abs(p[...,1])-h
+    within=1-smooth(0.98,1,x)
+    inside=(1-smooth(-0.008,0.008,edge))*within
+    eye=glass.copy()
+    pr=0.14+0.13*np.clip(pupil,0,1)
+    radial=np.clip((r-pr)/(0.52-pr),0,1)
+    iriscolour=sample(iris,np.stack([angle,radial],axis=-1))
+    mask=(1-smooth(0.51,0.53,r))[...,None]
+    eye=eye*(1-mask)+iriscolour*mask
+    mask=(1-smooth(pr-0.008,pr+0.008,r))[...,None]
+    eye=eye*(1-mask)+glass*np.array([0.10,0.12,0.25])*mask
+    lead=np.maximum(1-smooth(0.009,0.021,np.abs(r-0.52)),
+                    1-smooth(0.007,0.017,np.abs(r-pr)))[...,None]
+    black=np.array([0.006,0.008,0.018])
+    eye=eye*(1-lead)+black*lead
+    colour=glass*(1-inside[...,None])+eye*inside[...,None]
+    lead=((1-smooth(0.009,0.023,np.abs(edge)))*within)[...,None]
+    colour=colour*(1-lead)+black*lead
+    return (glass*(1-enabled)+colour*enabled)*255
 
 
 def rasterize(shapes, width, height):
@@ -207,7 +273,16 @@ def rasterize(shapes, width, height):
             colors = tex.image[ty,tx].copy()
             alpha = colors[:,:,3] / 255 * shape.alpha
             inside &= alpha > 0.001
-            if shape.shader != "uv_flat":
+            if shape.shader == "shaders/glass_window":
+                colors[:,:,:3] = glass_window_colour(uv,shape.textures[0],shape.textures[1],
+                                                     shape.custom_data[48:57])
+            elif shape.shader == "shaders/stained_glass":
+                data_map = shape.textures[1]
+                mx = np.clip((uv[:,:,0]*data_map.ix).astype(int),0,data_map.ix-1)
+                my = np.clip((uv[:,:,1]*data_map.iy).astype(int),0,data_map.iy-1)
+                pane = data_map.image[my,mx,:3]/255
+                colors[:,:,:3] *= tree_gain(pane,shape.custom_data[48:54])[:,:,None]
+            elif shape.shader != "uv_flat":
                 normal = weights @ normals[ids]
                 lighting = np.clip(normal @ np.array([0,-0.707,-0.707]),0,1)+0.2
                 colors[:,:,:3] *= lighting[:,:,None]
