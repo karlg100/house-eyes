@@ -1,0 +1,5 @@
+# Offline asset authoring, preview and tests only. No new Pi dependencies.
+Pillow>=9.2
+numpy>=1.21
+svg.path==6.3
+pytest>=7

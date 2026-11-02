@@ -16,6 +16,11 @@ from svg.path import Path, parse_path
 from xml.dom.minidom import parse
 from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
+from seasonal import theme_options, lid_weights, NoseGlow, ChristmasDecor
+
+season = theme_options()
+CHRISTMAS = season.theme == "christmas"
+noseGlow = NoseGlow(season.nose_mode, tuple(season.nose_every)) if CHRISTMAS else None
 
 # INPUT CONFIG for eye motion ----------------------------------------------
 # ANALOG INPUTS REQUIRE SNAKE EYES BONNET
@@ -92,7 +97,12 @@ class GazeInput(threading.Thread):
 	def run(self):
 		while True:
 			try:
-				words = self.sock.recv(256).decode("ascii", "ignore").split()
+				message = self.sock.recv(256).decode("ascii", "ignore")
+				words = message.split()
+				if words and words[0].lower() == "nose":
+					if noseGlow is not None:
+						noseGlow.command(message)
+					continue
 				pupil = None
 				nums = []
 				for w in words:
@@ -176,7 +186,8 @@ def gazeToEye(pt):
 # Load SVG file, extract paths & convert to point lists --------------------
 
 #dom               = parse("graphics/eye.svg")
-dom               = parse("graphics/cyclops-eye.svg")
+dom               = parse("graphics/christmas/reindeer-eye.svg" if CHRISTMAS
+                          else "graphics/cyclops-eye.svg")
 vb                = get_view_box(dom)
 pupilMinPts       = get_points(dom, "pupilMin"      , 32, True , True )
 pupilMaxPts       = get_points(dom, "pupilMax"      , 32, True , True )
@@ -255,6 +266,15 @@ lidMap    = pi3d.Texture("graphics/lid.png"   , mipmap=False,
 # U/V map may be useful for debugging texture placement; not normally used
 uvMap     = pi3d.Texture("graphics/uv.png"    , mipmap=False,
               filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
+
+if CHRISTMAS:
+	irisMap = pi3d.Texture("graphics/christmas/iris.png", mipmap=False,
+	                      filter=pi3d.constants.GL_LINEAR)
+	scleraMap = pi3d.Texture("graphics/christmas/sclera.png", mipmap=False,
+	                        filter=pi3d.constants.GL_LINEAR, blend=True)
+	lidMap = pi3d.Texture("graphics/christmas/lid.png", mipmap=False,
+	                     filter=pi3d.constants.GL_LINEAR, blend=True)
+decor = ChristmasDecor(pi3d, eyeRadius, eyePosition, season, noseGlow) if CHRISTMAS else None
 
 
 # Initialize static geometry -----------------------------------------------
@@ -629,7 +649,7 @@ def frame(p):
 	else:
 		if not rogueEyes and now >= rogueNext and now >= perEyeUntil:
 			count = 2 if random.random() < ROGUE_TWO else 1
-			for i in random.sample((0, 1, 2), count):
+			for i in random.sample((0, 2) if CHRISTMAS else (0, 1, 2), count):
 				rogueEyes[i] = [0.0, 0.0, 0.0]   # target set below
 			long = random.random() < ROGUE_LONG
 			rogueEnd = now + random.uniform(*(ROGUE_LINGER if long else ROGUE_GLANCE))
@@ -863,8 +883,7 @@ def frame(p):
 		if blinkStateLeft == 2: n = 1.0 - n
 	else:
 		n = 0.0
-	newLeftUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-	newLeftLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
+	newLeftUpperLidWeight, newLeftLowerLidWeight = lid_weights(trackingPos, n, CHRISTMAS)
 
 	if blinkStateCenter:
 		n = (now - blinkStartTimeCenter) / blinkDurationCenter
@@ -873,8 +892,7 @@ def frame(p):
 	else:
 		n = 0.0
 	tpC = trackingPosC if perEyeDraw else trackingPos
-	newCenterUpperLidWeight = tpC + (n * (1.0 - tpC))
-	newCenterLowerLidWeight = (1.0 - tpC) + (n * tpC)
+	newCenterUpperLidWeight, newCenterLowerLidWeight = lid_weights(tpC, n, CHRISTMAS)
 
 
 	if blinkStateRight:
@@ -884,8 +902,7 @@ def frame(p):
 	else:
 		n = 0.0
 	tpR = trackingPosR if perEyeDraw else trackingPos
-	newRightUpperLidWeight = tpR + (n * (1.0 - tpR))
-	newRightLowerLidWeight = (1.0 - tpR) + (n * tpR)
+	newRightUpperLidWeight, newRightLowerLidWeight = lid_weights(tpR, n, CHRISTMAS)
 
 	if (luRegen or (abs(newLeftUpperLidWeight - prevLeftUpperLidWeight) >=
 	  upperLidRegenThreshold)):
@@ -1013,19 +1030,20 @@ def frame(p):
 	rightEye.draw()
 
 	# Center eye (center screen)
-	if perEyeDraw:
-		centerIris.rotateToX(curYC)
-		centerIris.rotateToY(curXC - convergence)
-		centerIris.draw()
-		centerEye.rotateToX(curYC)
-		centerEye.rotateToY(curXC - convergence)
-	else:
-		centerIris.rotateToX(curY)
-		centerIris.rotateToY(curX - convergence)
-		centerIris.draw()
-		centerEye.rotateToX(curY)
-		centerEye.rotateToY(curX - convergence)
-	centerEye.draw()
+	if not CHRISTMAS:
+		if perEyeDraw:
+			centerIris.rotateToX(curYC)
+			centerIris.rotateToY(curXC - convergence)
+			centerIris.draw()
+			centerEye.rotateToX(curYC)
+			centerEye.rotateToY(curXC - convergence)
+		else:
+			centerIris.rotateToX(curY)
+			centerIris.rotateToY(curX - convergence)
+			centerIris.draw()
+			centerEye.rotateToX(curY)
+			centerEye.rotateToY(curX - convergence)
+		centerEye.draw()
 
 	
 	# Left eye (on screen right)
@@ -1037,15 +1055,24 @@ def frame(p):
 	leftEye.rotateToX(dLY)
 	leftEye.rotateToY(dLX + convergence)
 	leftEye.draw()
+	if decor:
+		decor.draw_shines((curYR, curXR - convergence) if perEyeDraw
+		                  else (curY, curX - convergence), (dLY, dLX + convergence))
 
 	leftUpperEyelid.draw()
 	leftLowerEyelid.draw()
-	centerUpperEyelid.draw()
-	centerLowerEyelid.draw()
+	if not CHRISTMAS:
+		centerUpperEyelid.draw()
+		centerLowerEyelid.draw()
 	rightUpperEyelid.draw()
 	rightLowerEyelid.draw()
+	if decor:
+		decor.draw_accents()
+		decor.draw_nose()
 
 	k = mykeys.read()
+	if noseGlow and k in (ord('n'), ord('N')):
+		noseGlow.command("nose pulse")
 	if k==27:
 		mykeys.close()
 		DISPLAY.stop()

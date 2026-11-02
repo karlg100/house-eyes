@@ -4,6 +4,10 @@ The three-eyed house. A Raspberry Pi drives a projector that throws three
 animated eyes onto a white sheet hung in front of the three second-floor
 windows. The eyes look around and blink on their own.
 
+**Christmas mode:** two reindeer eyes and a glowing Rudolph nose in the
+middle window, with random or commanded illumination. See
+[the preview, controls and launch instructions](docs/CHRISTMAS.md).
+
 ![Three eyes as rendered in the test VM](docs/vm-test.png)
 
 *Screenshot from the emulator test run (see [docs/VM-TEST.md](docs/VM-TEST.md)),
