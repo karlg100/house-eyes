@@ -227,6 +227,52 @@ def glass_window_colour(uv, body, iris, params):
     return (glass*(1-enabled)+colour*enabled)*255
 
 
+def turkey_eye_colour(uv, skin_map, iris_map, params):
+    """CPU equivalent of turkey_eye.fs; returns RGB and silhouette alpha."""
+    gx,gy,pupil,blink,side,_=params
+    def smooth(a,b,x):
+        t=np.clip((x-a)/(b-a),0,1)
+        return t*t*(3-2*t)
+    def sample(texture,coords):
+        coords=np.clip(coords,0,1)
+        ix=(coords[...,0]*(texture.ix-1)).astype(int)
+        iy=(coords[...,1]*(texture.iy-1)).astype(int)
+        return texture.image[iy,ix,:3]/255
+    p=(uv-.5)*np.array([2.6,2.4])
+    silhouette=np.linalg.norm(p/np.array([1.26,1.14]),axis=-1)
+    alpha=1-smooth(.88,1,silhouette)
+    blink=np.clip(blink,0,1)
+    follow=np.exp(-.80*np.sum(p*p,axis=-1))
+    skinuv=uv-np.array([gx,gy])*.06*follow[...,None]
+    skinuv[...,1]+=.06*blink*p[...,1]/np.sqrt(.04+p[...,1]**2)*follow
+    skinuv[...,0]=skinuv[...,0]*(1-side)+(1-skinuv[...,0])*side
+    skin=sample(skin_map,skinuv)*(1-.15*silhouette**2)[...,None]
+    lid=p-np.array([gx,gy])*.15
+    halfheight=.65*np.maximum(0,1-(lid[...,0]/.82)**2)**.45*(1-blink)
+    edge=np.abs(lid[...,1])-halfheight
+    extent=1-smooth(.79,.83,np.abs(lid[...,0]))
+    opening=(1-smooth(-.008,.012,edge))*extent
+    q=p-np.array([gx,gy])
+    r=np.linalg.norm(q,axis=-1)
+    pr=.17+.09*np.clip(pupil,0,1)
+    angle=np.arctan2(q[...,1],q[...,0])/(2*np.pi)+.5
+    radial=np.clip((r-pr)/(.60-pr),0,1)
+    iris=sample(iris_map,np.stack([angle,radial],axis=-1))*np.array([1.38,1.13,.95])
+    mask=(1-smooth(.57,.61,r))[...,None]
+    eye=np.array([.065,.040,.025])*(1-mask)+iris*mask
+    mask=(1-smooth(pr-.007,pr+.007,r))[...,None]
+    eye=eye*(1-mask)+np.array([.008,.006,.004])*mask
+    eye*=(.90+.10*np.sqrt(np.maximum(0,1-r*r)))[...,None]
+    shine=np.exp(-2*np.sum(((q-np.array([-.17,-.19]))/np.array([.10,.055]))**2,axis=-1))
+    pin=np.exp(-2*np.sum(((q-np.array([-.04,-.11]))/.025)**2,axis=-1))
+    mask=np.clip(.90*shine+.60*pin,0,1)[...,None]
+    eye=eye*(1-mask)+np.array([1,.97,.88])*mask
+    colour=skin*(1-opening[...,None])+eye*opening[...,None]
+    rim=((1-smooth(.008,.030,np.abs(edge)))*extent)[...,None]
+    colour=colour*(1-rim)+skin*.48*rim
+    return colour*255,alpha
+
+
 def rasterize(shapes, width, height):
     rgb = np.zeros((height, width, 3), dtype=float)
     depth = np.full((height,width), np.inf)
@@ -273,7 +319,11 @@ def rasterize(shapes, width, height):
             colors = tex.image[ty,tx].copy()
             alpha = colors[:,:,3] / 255 * shape.alpha
             inside &= alpha > 0.001
-            if shape.shader == "shaders/glass_window":
+            if shape.shader == "shaders/turkey_eye":
+                colors[:,:,:3],alpha=turkey_eye_colour(uv,*shape.textures,shape.custom_data[48:54])
+                alpha*=shape.alpha
+                inside &= alpha > .0035
+            elif shape.shader == "shaders/glass_window":
                 colors[:,:,:3] = glass_window_colour(uv,shape.textures[0],shape.textures[1],
                                                      shape.custom_data[48:57])
             elif shape.shader == "shaders/stained_glass":

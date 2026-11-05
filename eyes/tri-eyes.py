@@ -18,11 +18,13 @@ from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
 from seasonal import theme_options, lid_weights, NoseGlow, ChristmasDecor
 from stained_glass import GlassDecor
+from thanksgiving import TurkeyDecor
 
 season = theme_options()
 CHRISTMAS = season.theme == "christmas"
 STAINED_GLASS = season.theme == "stained-glass"
-CENTER_DECOR = CHRISTMAS or STAINED_GLASS
+THANKSGIVING = season.theme == "thanksgiving"
+CENTER_DECOR = CHRISTMAS or STAINED_GLASS or THANKSGIVING
 noseGlow = NoseGlow(season.nose_mode, tuple(season.nose_every)) if CHRISTMAS else None
 treeGlow = (NoseGlow(season.tree_mode, tuple(season.tree_every), command_word="tree")
             if STAINED_GLASS else None)
@@ -288,6 +290,7 @@ if CHRISTMAS:
 	                     filter=pi3d.constants.GL_LINEAR, blend=True)
 decor = ChristmasDecor(pi3d, eyeRadius, eyePosition, season, noseGlow) if CHRISTMAS else None
 glassDecor = GlassDecor(pi3d, eyeRadius, eyePosition, season, treeGlow) if STAINED_GLASS else None
+turkeyDecor = TurkeyDecor(pi3d, eyeRadius, eyePosition, season) if THANKSGIVING else None
 if STAINED_GLASS:
 	irisMap = pi3d.Texture("graphics/stained-glass/iris.png", mipmap=False,
 	                      filter=pi3d.constants.GL_LINEAR)
@@ -1034,7 +1037,7 @@ def frame(p):
 	convergence = 2.0
 
 	dLX, dLY = (rogueRX, rogueRY) if rogueROn else (curX, curY)
-	if not STAINED_GLASS:
+	if not (STAINED_GLASS or THANKSGIVING):
 		# Right eye (on screen left)
 		if perEyeDraw:
 			rightIris.rotateToX(curYR)
@@ -1090,17 +1093,20 @@ def frame(p):
 		if decor:
 			decor.draw_accents()
 			decor.draw_nose()
-	if glassDecor:
+	if glassDecor or turkeyDecor:
 		def glassBlink(state, started, duration):
 			if not state: return 0.0
 			t = min(1.0, max(0.0, (now-started)/duration))
 			return 1.0-t if state == 2 else t
-		glassDecor.draw_windows(
-		    (curYR, curXR-convergence) if perEyeDraw else (curY, curX-convergence),
-		    (dLY, dLX+convergence), p,
-		    glassBlink(blinkStateRight, blinkStartTimeRight, blinkDurationRight),
-		    glassBlink(blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft))
-		glassDecor.draw()
+		rotations = ((curYR, curXR-convergence) if perEyeDraw else (curY, curX-convergence),
+		             (dLY, dLX+convergence), p,
+		             glassBlink(blinkStateRight, blinkStartTimeRight, blinkDurationRight),
+		             glassBlink(blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft))
+		if glassDecor:
+			glassDecor.draw_windows(*rotations)
+			glassDecor.draw()
+		if turkeyDecor:
+			turkeyDecor.draw(*rotations)
 
 	k = mykeys.read()
 	if noseGlow and k in (ord('n'), ord('N')):

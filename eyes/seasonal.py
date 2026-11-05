@@ -23,7 +23,7 @@ def finite(value):
 
 def theme_options(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--theme", choices=("halloween", "christmas", "stained-glass"), default="halloween")
+    parser.add_argument("--theme", choices=("halloween", "christmas", "stained-glass", "thanksgiving"), default="halloween")
     parser.add_argument("--nose-mode", choices=("auto", "on", "off"), default="auto")
     parser.add_argument("--nose-every", type=positive, nargs=2, default=(12.0, 35.0),
                         metavar=("MIN", "MAX"))
@@ -38,6 +38,10 @@ def theme_options(argv=None):
                         help="stained-glass window width in eye radii")
     parser.add_argument("--window-height", type=positive, default=4.0,
                         help="stained-glass window height in eye radii")
+    parser.add_argument("--beak-scale", type=positive, default=1.0,
+                        help="Thanksgiving beak size multiplier")
+    parser.add_argument("--beak-y", type=finite, default=0.0,
+                        help="Thanksgiving beak vertical adjustment in pixels, positive up")
     args, _ = parser.parse_known_args(argv)
     if args.nose_every[0] > args.nose_every[1]:
         parser.error("--nose-every MIN must be <= MAX")

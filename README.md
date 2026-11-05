@@ -12,6 +12,10 @@ middle window, with random or commanded illumination. See
 emerald tree with a Bethlehem star in the centre. See
 [the stained-glass preview and controls](docs/stained-glass/README.md).
 
+**Thanksgiving mode:** amber turkey eyes with blue-and-red facial skin,
+plus a golden beak and red snood/wattle in the centre window. See
+[the turkey preview and launch instructions](docs/thanksgiving/README.md).
+
 ![Three eyes as rendered in the test VM](docs/vm-test.png)
 
 *Screenshot from the emulator test run (see [docs/VM-TEST.md](docs/VM-TEST.md)),
